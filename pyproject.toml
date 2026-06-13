@@ -1,0 +1,24 @@
+[project]
+name = "kanbai"
+version = "0.1.0"
+description = "Agent-compatible Kanban board with MCP server, AI chat, and encrypted vault"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "cryptography>=43.0.0",
+  "fastmcp>=3.4.2",
+  "flet>=0.85.3",
+  "flet-charts>=0.85.3",
+  "matplotlib>=3.10.9",
+  "openai>=1.50.0",
+  "python-dotenv>=1.2.2",
+  "python-frontmatter>=1.3.0",
+  "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+kanbai = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agent", "board", "board_data", "mcp_server", "ui", "vault"]

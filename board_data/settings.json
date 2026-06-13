@@ -1,0 +1,6 @@
+{
+  "use_local_tz": true,
+  "reasoning_effort": "none",
+  "max_completion_tokens": 512,
+  "stream_response": true
+}
