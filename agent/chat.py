@@ -313,7 +313,7 @@ _TOOLS = [
 ]
 
 _BASE_PROMPT = (
-    "You are Kanbai, an AI assistant embedded in a personal Kanban board. "
+    "You are Kanbot, an AI assistant embedded in a personal Kanban board. "
     "Lanes available: backlog, in_progress, review, done. "
     "When the user refers to a card by task number (e.g. #26 or 'card 26'), "
     "always use get_card_by_number to resolve it before taking action. "
@@ -419,7 +419,7 @@ def _tools_for_mode(mode: str) -> list[dict]:
     return [t for t in _TOOLS if t["function"]["name"] in _READ_TOOL_NAMES]
 
 
-def _resolve_deployment(model: ChatModel) -> str:
+def _resolve_deployment(model: ModelDef) -> str:
     """Resolve an Azure deployment name from the model definition."""
     dep = os.environ.get(model.env_var)
     if not dep:
@@ -671,19 +671,20 @@ def chat(
             finish_reason = choice.finish_reason
             full_content = choice.message.content or ""
             usage = response.usage
-            total_tokens = usage.total_tokens or 0
-            prompt_tokens = usage.prompt_tokens or 0
-            completion_tokens = usage.completion_tokens or 0
+            total_tokens = usage.total_tokens or 0 if usage else 0
+            prompt_tokens = usage.prompt_tokens or 0 if usage else 0
+            completion_tokens = usage.completion_tokens or 0 if usage else 0
             details = getattr(usage, "completion_tokens_details", None)
             reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0
 
             raw_tool_calls = choice.message.tool_calls or []
             tool_calls_acc: dict[int, dict] = {}
             for i, tc in enumerate(raw_tool_calls):
+                fn = getattr(tc, "function", None)
                 tool_calls_acc[i] = {
                     "id": tc.id,
-                    "name": tc.function.name,
-                    "arguments": tc.function.arguments,
+                    "name": fn.name if fn else "",
+                    "arguments": fn.arguments if fn else "{}",
                 }
         else:
             # ── Streaming path: on_token called per chunk ──
