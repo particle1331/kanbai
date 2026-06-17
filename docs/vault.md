@@ -4,7 +4,7 @@
 > built, what it protects against, what it does *not* protect against, and which
 > workflows are encouraged vs. forbidden.**
 
-The vault lives in `vault/vault.py` and stores its data in `secrets.db`. This
+The vault lives in `vault/vault.py` and stores its data in `.db`. This
 document is for anyone deciding *whether and how* to use it.
 
 ---
@@ -15,7 +15,7 @@ document is for anyone deciding *whether and how* to use it.
   secrets manager**.
 - It uses **AES-256-GCM** with a key derived from a passphrase via **scrypt**;
   the key lives **only in process memory**.
-- **Both names and values are encrypted.** `secrets.db` is git-tracked but a
+- **Both names and values are encrypted.** `.db` is git-tracked but a
   snooper sees only HMAC indexes and ciphertext.
 - **No code path — human UI aside — can read a secret value programmatically.**
   Neither the chat agent nor MCP exposes a "get value" operation. This is
@@ -64,13 +64,13 @@ short-lived leases. It is intentionally minimal.
 ```mermaid
 flowchart TD
     PASS["KANBAI_VAULT_PASS<br/>(env var)"]
-    SCRYPT["scrypt KDF<br/>(salt from secrets.db)"]
+    SCRYPT["scrypt KDF<br/>(salt from .db)"]
     KEY["AES-256 key<br/><i>in-memory only</i>"]
     HKDF["HKDF sub-key<br/>(name index)"]
     UI["Vault panel (UI)<br/>reveal / add / delete"]
     CHAT["chat agent"]
     MCP["MCP server"]
-    SDB[("secrets.db<br/>git-tracked")]
+    SDB[(".db<br/>git-tracked")]
 
     PASS --> SCRYPT --> KEY
     KEY --> HKDF
@@ -81,7 +81,7 @@ flowchart TD
     HKDF --> SDB
 ```
 
-`secrets.db` has three tables:
+`.db` has three tables:
 
 | Table | Purpose |
 |-------|---------|
@@ -176,7 +176,7 @@ backdoor secret source for automated callers.
 
 ## Threat model: what it protects against
 
-✅ **Plaintext-in-git leakage.** The whole point: `secrets.db` can be committed
+✅ **Plaintext-in-git leakage.** The whole point: `.db` can be committed
 and pushed, and an attacker reading the repo sees only ciphertext and HMACs — no
 names, no values.
 
@@ -189,7 +189,7 @@ cannot read values — the capability simply isn't exposed.
 ✅ **Passphrase brute force (to a degree).** scrypt's memory-hardness makes
 offline guessing expensive, proportional to passphrase strength.
 
-✅ **Tampering.** AES-GCM authentication means a modified `secrets.db` fails to
+✅ **Tampering.** AES-GCM authentication means a modified `.db` fails to
 decrypt rather than silently returning corrupted data.
 
 ---
@@ -235,7 +235,7 @@ passphrase — the sweet spot.
 ✅ **Small team with an out-of-band shared passphrase**, *if* everyone
 understands it's a convenience store and treats the machine as trusted.
 
-✅ **Committing `secrets.db` to git.** Encouraged and safe — that's what the
+✅ **Committing `.db` to git.** Encouraged and safe — that's what the
 encryption is for. (`.env` and `.cache.db` stay gitignored.)
 
 ---

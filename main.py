@@ -23,7 +23,6 @@ def run_app() -> None:
     from ui.vault_panel import VaultPanel
     from ui.kanban_page import KanbanPage
     from ui.table_page import TablePage
-    from ui.analytics_page import AnalyticsPage
     from ui.health_page import HealthPage
     from ui.graph_page import GraphPage
     from ui.settings_dialog import open_settings_dialog
@@ -65,15 +64,12 @@ def run_app() -> None:
                 def on_updated(cid, col):
                     import threading
                     threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
-                    analytics_pg.refresh()
                 def on_moved(cid, old_col, new_col):
                     import threading
                     threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
-                    analytics_pg.refresh()
                 def on_archived(cid, col):
                     import threading
                     threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
-                    analytics_pg.refresh()
                     _go_back()
 
                 open_edit_dialog(
@@ -114,24 +110,17 @@ def run_app() -> None:
             # (destinations, view switching, programmatic navigation) follows.
             NAV_ITEMS = [
                 ("board", ft.Icons.VIEW_KANBAN_OUTLINED, ft.Icons.VIEW_KANBAN, "Board"),
-                ("analytics", ft.Icons.BAR_CHART_OUTLINED, ft.Icons.BAR_CHART, "Analytics"),
                 ("health", ft.Icons.MONITOR_HEART_OUTLINED, ft.Icons.MONITOR_HEART, "Health"),
                 ("graph", ft.Icons.ACCOUNT_TREE_OUTLINED, ft.Icons.ACCOUNT_TREE, "Graph"),
                 ("table", ft.Icons.TABLE_ROWS_OUTLINED, ft.Icons.TABLE_ROWS, "Table"),
             ]
             NAV_INDEX = {key: i for i, (key, *_rest) in enumerate(NAV_ITEMS)}
 
-            # Health indicator dots embedded in the Analytics nav icon.
-            # Two instances — one for unselected state, one for selected state.
-            _health_dot_unsel = ft.Container(width=9, height=9, border_radius=5, visible=False, right=0, top=2)
-            _health_dot_sel   = ft.Container(width=9, height=9, border_radius=5, visible=False, right=0, top=2)
-
-            # Same dots for the Health nav icon.
+            # Health indicator dots for the Health nav icon.
             _health_dot_health_unsel = ft.Container(width=9, height=9, border_radius=5, visible=False, right=0, top=2)
             _health_dot_health_sel   = ft.Container(width=9, height=9, border_radius=5, visible=False, right=0, top=2)
 
             _all_nav_dots = (
-                _health_dot_unsel, _health_dot_sel,
                 _health_dot_health_unsel, _health_dot_health_sel,
             )
 
@@ -209,7 +198,6 @@ def run_app() -> None:
                 on_epic_change=_on_epic_changed,
             )
             table_pg = TablePage(page, on_open_card)
-            analytics_pg = AnalyticsPage(page, on_open_card, on_epic_change=_on_epic_changed)
             health_pg = HealthPage(
                 page,
                 on_open_card=on_open_card,
@@ -224,7 +212,6 @@ def run_app() -> None:
 
             kanban_view = kanban.build()
             table_view = table_pg.build()
-            analytics_view = analytics_pg.build()
             health_view = health_pg.build()
             graph_view = graph_pg.build()
 
@@ -232,14 +219,12 @@ def run_app() -> None:
             # stays keyed by name rather than fragile positional indices.
             view_by_key = {
                 "board": kanban_view,
-                "analytics": analytics_view,
                 "health": health_view,
                 "graph": graph_view,
                 "table": table_view,
             }
             select_by_key = {
                 "board": kanban.select_epic,
-                "analytics": analytics_pg.select_epic,
                 "health": health_pg.select_epic,
                 "graph": graph_pg.select_epic,
                 "table": table_pg.select_epic,
@@ -255,8 +240,7 @@ def run_app() -> None:
             # Keep ALL views mounted and just toggle visibility on navigation.
             # Swapping a single container's .content forces Flet to tear down
             # and re-transmit the entire (heavy) view subtree to the browser on
-            # every switch — the analytics page alone is ~370 heatmap cells plus
-            # chart images, which is what made repeat switches take seconds.
+            # every switch. Visibility toggling leaves the tree mounted, so
             # Visibility toggling leaves the tree mounted, so switching back to
             # an already-rendered view is instant.
             for _key, _view in view_by_key.items():
@@ -270,7 +254,6 @@ def run_app() -> None:
                 kanban.refresh_board()
                 kanban.refresh_epics()
                 table_pg.refresh()
-                analytics_pg.refresh()
                 graph_pg.refresh()
                 graph_pg.refresh_epics()
                 _refresh_health_badge()
@@ -313,7 +296,6 @@ def run_app() -> None:
             def on_open_settings(_e) -> None:
                 def on_settings_change() -> None:
                     kanban.refresh_board()
-                    analytics_pg.refresh()
                 open_settings_dialog(page, on_change=on_settings_change)
 
             settings_button = ft.Container(
@@ -336,11 +318,9 @@ def run_app() -> None:
                 bgcolor="#252526",
                 destinations=[
                     ft.NavigationRailDestination(
-                        icon=_health_icon_stack(ft.Icons.BAR_CHART_OUTLINED, _health_dot_unsel) if key == "analytics"
-                            else _health_icon_stack(ft.Icons.MONITOR_HEART_OUTLINED, _health_dot_health_unsel) if key == "health"
+                        icon=_health_icon_stack(ft.Icons.MONITOR_HEART_OUTLINED, _health_dot_health_unsel) if key == "health"
                             else icon,
-                        selected_icon=_health_icon_stack(ft.Icons.BAR_CHART, _health_dot_sel) if key == "analytics"
-                            else _health_icon_stack(ft.Icons.MONITOR_HEART, _health_dot_health_sel) if key == "health"
+                        selected_icon=_health_icon_stack(ft.Icons.MONITOR_HEART, _health_dot_health_sel) if key == "health"
                             else selected_icon,
                         label=label,
                     )
@@ -415,7 +395,6 @@ def run_app() -> None:
                         sidebar,
                         ft.VerticalDivider(width=1, color="#3E3E42"),
                         kanban_view,
-                        analytics_view,
                         health_view,
                         graph_view,
                         table_view,

@@ -147,7 +147,7 @@ MCP clients launch the server as a subprocess. The shape is the same everywhere;
 syntax varies by client.
 
 > **Kanbai anchors its data to its own repo location, not the launch directory.**
-> All data paths (`board_data/`, `secrets.db`, `.cache.db`, `.env`) resolve
+> All data paths (`board_data/`, `.db`, `.cache.db`, `.env`) resolve
 > relative to `paths.py` in the Kanbai repo — see [`paths.py`](../paths.py). So
 > you can launch the server from **any** working directory as long as you point
 > at Kanbai's `main.py` by **absolute path**. The common case is "I'm coding in

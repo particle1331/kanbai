@@ -277,10 +277,6 @@ class HealthPage:
                 # ── 0. Stat cards (inflow → process → outflow → age → risk) ──
                 ft.Row(
                     [
-                        self._stat_card_pull_rate(
-                            flow_7["started"],
-                            flow_7["created"],
-                        ),
                         self._stat_card_throughput(
                             tp7_val,
                             flow_7["completed"],
@@ -292,8 +288,12 @@ class HealthPage:
                             by_lane.get("review", 0),
                             kpi_bands["wip"],
                         ),
-                        self._stat_card_median_ct(median_ct_7d),
                         self._stat_card_wip_age(wip_age),
+                        self._stat_card_median_ct(median_ct_7d),
+                        self._stat_card_pull_rate(
+                            flow_7["started"],
+                            flow_7["created"],
+                        ),
                         self._stat_card_backlog_age(backlog_age),
                         self._stat_card_blockers(
                             blocker_count,
