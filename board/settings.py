@@ -188,6 +188,11 @@ def set_stream_response(value: bool) -> None:
     _save()
 
 
+# ── Default tags ─────────────────────────────────────────────────────────────────
+# Shown as quick-pick chips in the card dialog. These map to the spec's
+# "type" dimension: bugfix / feature / enhancement.
+DEFAULT_TAGS: list[str] = ["bugfix", "feature", "enhancement"]
+
 # ── Project health thresholds ──────────────────────────────────────────────────
 # Centralized thresholds for the analytics "Project Health" indicator.
 #
@@ -198,7 +203,10 @@ def set_stream_response(value: bool) -> None:
 #   value <= bad    → "watch"  (amber)
 #   value >  bad    → "bad"    (red)
 #
-# Adjust the threshold pairs below to make the indicator more or less sensitive.
+# For ratio metrics (pull rate, throughput), the scale is *inverted*: a lower
+# ratio is worse, so band_inverted() is used.
+#
+# Adjust the threshold pairs below to match your team's rhythm.
 
 # Average open-task age (days). Open = non-archived, non-done cards.
 HEALTH_AVG_AGE_WATCH_DAYS: float = 14.0
@@ -206,7 +214,7 @@ HEALTH_AVG_AGE_BAD_DAYS: float = 28.0
 
 # Oldest open-task age (days) — the single most stale card.
 HEALTH_MAX_AGE_WATCH_DAYS: float = 56.0
-HEALTH_MAX_AGE_BAD_DAYS: float = 90.0
+HEALTH_MAX_AGE_BAD_DAYS: float = 84.0
 
 # Days since the last completion (only counts when open cards exist).
 HEALTH_LAST_DONE_WATCH_DAYS: float = 14.0
@@ -215,6 +223,30 @@ HEALTH_LAST_DONE_BAD_DAYS: float = 28.0
 # Days since the last column transition (only counts when open cards exist).
 HEALTH_LAST_MOVE_WATCH_DAYS: float = 7.0
 HEALTH_LAST_MOVE_BAD_DAYS: float = 14.0
+
+# Days since the last card was started (entered in_progress).
+HEALTH_LAST_STARTED_WATCH_DAYS: float = 14.0
+HEALTH_LAST_STARTED_BAD_DAYS: float = 28.0
+
+# Days since the last card was created.
+HEALTH_LAST_CREATED_WATCH_DAYS: float = 56.0
+HEALTH_LAST_CREATED_BAD_DAYS: float = 84.0
+
+# Pull rate (started ÷ created). Lower is worse (backlog growing).
+# Inverted scale: value < watch → watch, value < bad → bad.
+HEALTH_PULL_RATE_WATCH: float = 0.7
+HEALTH_PULL_RATE_BAD: float = 0.4
+
+# Throughput (completed ÷ started). Healthy near 1.0 (WIP stable).
+# Inverted scale: value < watch → watch, value < bad → bad.
+HEALTH_THROUGHPUT_WATCH: float = 0.7
+HEALTH_THROUGHPUT_BAD: float = 0.4
+
+# Avg cycle time in days (start → done). Higher = worse.
+# Spec target: every card finishes in 1–3 days. Watch triggers at > 3d,
+# bad at > 5d — consistent with the fixed task-size convention.
+HEALTH_CYCLE_TIME_WATCH_DAYS: float = 3.0
+HEALTH_CYCLE_TIME_BAD_DAYS: float = 5.0
 
 # Active blocker count. Any blocker (>0) is immediately "bad"; there is no
 # watch state for blockers because a blocked card needs attention right away.
@@ -271,6 +303,22 @@ def band(value: float | None, watch: float, bad: float) -> str:
     if value > bad:
         return "bad"
     if value > watch:
+        return "watch"
+    return "good"
+
+
+def band_inverted(value: float | None, watch: float, bad: float) -> str:
+    """Classify ``value`` on an *inverted* scale (lower is worse).
+
+    Used for ratio metrics like pull rate and throughput where
+    value < bad → 'bad', value < watch → 'watch', else 'good'.
+    ``None`` (no data / denominator was zero) is treated as 'good'.
+    """
+    if value is None:
+        return "good"
+    if value < bad:
+        return "bad"
+    if value < watch:
         return "watch"
     return "good"
 

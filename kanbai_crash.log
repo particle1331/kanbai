@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/Users/particle1331/code/latest/kanbai/main.py", line 228, in app
+    health_view = health_pg.build()
+  File "/Users/particle1331/code/latest/kanbai/ui/health_page.py", line 134, in build
+    body_content = self._build_body()
+  File "/Users/particle1331/code/latest/kanbai/ui/health_page.py", line 314, in _build_body
+    self._chart_throughput_wip(tp_wip_series),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/Users/particle1331/code/latest/kanbai/ui/health_page.py", line 1510, in _chart_throughput_wip
+    return ft.Image(src_base64=self._fig_to_b64(fig), fit=ft.BoxFit.CONTAIN,
+           ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    border_radius=6)
+                    ^^^^^^^^^^^^^^^^
+TypeError: Image.__init__() got an unexpected keyword argument 'src_base64'

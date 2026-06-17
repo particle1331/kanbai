@@ -6,6 +6,7 @@ from datetime import datetime, date
 from board import epics as _epics
 from board import operations
 from board.models import LANE_LABELS, LANES
+from board.settings import DEFAULT_TAGS
 from board.storage import sqlite_cache as _sc
 from ui import avatar_color
 from ui import theme
@@ -54,6 +55,36 @@ def _make_due_field(page: ft.Page, initial: str = "") -> tuple[ft.Row, ft.TextFi
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
     return row, due_field
+
+
+def _tag_suggestions(tags_field: ft.TextField) -> ft.Row:
+    """Quick-pick chips for the three default type tags.
+
+    Clicking a chip appends the tag to the comma-separated tags field
+    (no-op if it's already present).
+    """
+    def _add_tag(tag: str) -> None:
+        existing = [t.strip() for t in (tags_field.value or "").split(",") if t.strip()]
+        if tag not in existing:
+            existing.append(tag)
+            tags_field.value = ", ".join(existing)
+            tags_field.update()
+
+    chips = [
+        ft.Container(
+            content=ft.Text(tag, size=11, color="#8B949E"),
+            border=ft.Border(
+                ft.BorderSide(1, "#30363D"), ft.BorderSide(1, "#30363D"),
+                ft.BorderSide(1, "#30363D"), ft.BorderSide(1, "#30363D"),
+            ),
+            border_radius=10,
+            padding=ft.Padding(8, 3, 8, 3),
+            on_click=lambda e, t=tag: _add_tag(t),
+            ink=True,
+        )
+        for tag in DEFAULT_TAGS
+    ]
+    return ft.Row([ft.Text("quick:", size=10, color="#4A6278"), *chips], spacing=6)
 
 
 def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epic: str | None = None) -> None:
@@ -323,6 +354,7 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
                             ft.Container(height=4),
                             ft.Row([priority_dd, lane_dd], spacing=8),
                             tags_field,
+                            _tag_suggestions(tags_field),
                             assigned_field,
                             due_row,
                             error_text,
@@ -1056,6 +1088,7 @@ def open_edit_dialog(
                 ft.Row([priority_dd, lane_dd], spacing=8),
                 epic_dd,
                 tags_field,
+                _tag_suggestions(tags_field),
                 assigned_field,
                 due_row,
                 op_error,

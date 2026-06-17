@@ -470,6 +470,20 @@ def count_archived(epic: str | None = None) -> int:
     return int(row["cnt"])
 
 
+def count_archived_within(days: int, epic: str | None = None) -> int:
+    """Count cards archived in the last ``days`` days (uses updated_at as proxy)."""
+    from datetime import datetime, timedelta, timezone
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    clause = " AND epic = ?" if epic is not None else ""
+    params: tuple = (since, epic) if epic is not None else (since,)
+    with _conn() as con:
+        row = con.execute(
+            f"SELECT COUNT(*) as cnt FROM cards WHERE archived = 1 AND updated_at >= ?{clause}",
+            params,
+        ).fetchone()
+    return int(row["cnt"])
+
+
 def count_due_within(days: int, epic: str | None = None) -> int:
     """Count active (non-archived, non-done) cards whose due_date is on or
     before *days* days from today. Overdue cards are included; done and
@@ -568,6 +582,68 @@ def count_completed_within(days: int, epic: str | None = None) -> int:
             SELECT COUNT(*) as cnt FROM cards
             WHERE archived = 0 AND lane = 'done'
               AND updated_at != '' AND updated_at >= ?{clause}
+            """,
+            params,
+        ).fetchone()
+    return int(row["cnt"])
+
+
+def count_started_within(days: int, epic: str | None = None) -> int:
+    """Count distinct cards that entered 'in_progress' within the trailing *days* window.
+
+    Uses the transitions table with COUNT(DISTINCT card_id) so cards that were
+    started, moved back, then started again are only counted once.
+    """
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    join = ""
+    epic_clause = ""
+    params: list = [cutoff]
+    if epic is not None:
+        join = "JOIN cards c ON c.id = t.card_id"
+        epic_clause = " AND c.epic = ?"
+        params.append(epic)
+    with _conn() as con:
+        row = con.execute(
+            f"""
+            SELECT COUNT(DISTINCT t.card_id) AS cnt
+            FROM transitions t
+            {join}
+            WHERE t.to_col = 'in_progress' AND t.at >= ?{epic_clause}
+            """,
+            params,
+        ).fetchone()
+    return int(row["cnt"])
+
+
+def count_completed_from_window(days: int, epic: str | None = None) -> int:
+    """Count cards that were both *started* and *completed* within the trailing
+    *days* window.
+
+    This is the correct numerator for throughput: cards that entered
+    ``in_progress`` **and** ``done`` within the same period, so we never
+    count completions of work that was started in an earlier window.
+    """
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    join = ""
+    epic_clause = ""
+    params: list = [cutoff, cutoff]
+    if epic is not None:
+        join = "JOIN cards c ON c.id = s.card_id"
+        epic_clause = " AND c.epic = ?"
+        params.append(epic)
+    with _conn() as con:
+        row = con.execute(
+            f"""
+            SELECT COUNT(DISTINCT s.card_id) AS cnt
+            FROM transitions s
+            {join}
+            JOIN transitions d ON d.card_id = s.card_id
+            WHERE s.to_col = 'in_progress' AND s.at >= ?
+              AND d.to_col = 'done'        AND d.at >= ?
+              AND d.at >= s.at
+              {epic_clause}
             """,
             params,
         ).fetchone()
@@ -990,6 +1066,100 @@ def open_card_age_stats(epic: str | None = None) -> dict:
     }
 
 
+def backlog_age_stats(epic: str | None = None) -> dict:
+    """Median age and outlier count for cards in the backlog lane.
+
+    Returns ``{"count", "median_age", "outlier_count"}`` where
+    ``outlier_count`` is the number of cards with age > 2 * median_age.
+    All age values are ``None`` / 0 when there are no backlog cards.
+    """
+    clause = " AND epic = ?" if epic is not None else ""
+    params = (epic,) if epic is not None else ()
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT created_at FROM cards
+            WHERE archived = 0 AND lane = 'backlog'
+              AND created_at != ''{clause}
+            """,
+            params,
+        ).fetchall()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    ages: list[float] = []
+    for row in rows:
+        raw = row["created_at"]
+        try:
+            if "T" in raw:
+                d = datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            else:
+                d = datetime.strptime(raw[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        ages.append((now - d).total_seconds() / 86400)
+    if not ages:
+        return {"count": 0, "median_age": None, "outlier_count": 0}
+    ages.sort()
+    n = len(ages)
+    mid = n // 2
+    median = ages[mid] if n % 2 else (ages[mid - 1] + ages[mid]) / 2
+    outliers = sum(1 for a in ages if a > 2 * median)
+    outliers_1_5x = sum(1 for a in ages if a > 1.5 * median)
+    return {
+        "count": n,
+        "median_age": round(median, 1),
+        "outlier_count": outliers,
+        "outlier_count_1_5x": outliers_1_5x,
+    }
+
+
+def wip_age_stats(epic: str | None = None) -> dict:
+    """Min / median / avg / max age (days) of cards currently in WIP lanes.
+
+    WIP = ``in_progress`` + ``review``. Ages are ``now - created_at``.
+    Returns ``{"count", "min_age", "median_age", "avg_age", "max_age"}``;
+    age values are ``None`` when there are no WIP cards.
+    """
+    clause = " AND epic = ?" if epic is not None else ""
+    params = (epic,) if epic is not None else ()
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT created_at FROM cards
+            WHERE archived = 0
+              AND lane IN ('in_progress', 'review')
+              AND created_at != ''{clause}
+            """,
+            params,
+        ).fetchall()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    ages: list[float] = []
+    for row in rows:
+        raw = row["created_at"]
+        try:
+            if "T" in raw:
+                dt = datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            else:
+                dt = datetime.strptime(raw[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        ages.append((now - dt).total_seconds() / 86400)
+    if not ages:
+        return {"count": 0, "min_age": None, "median_age": None, "avg_age": None, "max_age": None}
+    ages.sort()
+    n = len(ages)
+    mid = n // 2
+    median = ages[mid] if n % 2 else (ages[mid - 1] + ages[mid]) / 2
+    return {
+        "count": n,
+        "min_age":    round(min(ages), 1),
+        "median_age": round(median, 1),
+        "avg_age":    round(sum(ages) / n, 1),
+        "max_age":    round(max(ages), 1),
+    }
+
+
 def days_since_last_transition(epic: str | None = None) -> int | None:
     """Whole days since the most recent column transition, or None if none logged.
 
@@ -1019,6 +1189,189 @@ def days_since_last_transition(epic: str | None = None) -> int | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return max(0, (datetime.now(timezone.utc) - dt).days)
+
+
+def days_since_last_started(epic: str | None = None) -> int | None:
+    """Whole days since the most recent card entered 'in_progress', or None."""
+    join = ""
+    clause = ""
+    params: list = []
+    if epic is not None:
+        join = "JOIN cards c ON c.id = t.card_id"
+        clause = " AND c.epic = ?"
+        params.append(epic)
+    with _conn() as con:
+        row = con.execute(
+            f"SELECT MAX(t.at) AS last_at FROM transitions t {join}"
+            f" WHERE t.to_col = 'in_progress'{clause}",
+            params,
+        ).fetchone()
+    if not row or not row["last_at"]:
+        return None
+    from datetime import datetime, timezone
+    raw = row["last_at"]
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - dt).days)
+
+
+def days_since_last_created(epic: str | None = None) -> int | None:
+    """Whole days since the most recent card was created (entered the board), or None."""
+    join = ""
+    clause = ""
+    params: list = []
+    if epic is not None:
+        join = "JOIN cards c ON c.id = t.card_id"
+        clause = " AND c.epic = ?"
+        params.append(epic)
+    with _conn() as con:
+        row = con.execute(
+            f"SELECT MAX(t.at) AS last_at FROM transitions t {join}"
+            f" WHERE t.from_col IS NULL{clause}",
+            params,
+        ).fetchone()
+    if not row or not row["last_at"]:
+        return None
+    from datetime import datetime, timezone
+    raw = row["last_at"]
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - dt).days)
+
+
+def avg_cycle_time_days(days: int, epic: str | None = None) -> float | None:
+    """Average cycle time in days for cards completed in the last ``days`` days.
+
+    Cycle time = elapsed days from the most recent 'in_progress' transition to
+    the 'done' transition for each completion event in the window.  Cards that
+    were never started (no 'in_progress' transition) are excluded.
+    Returns ``None`` when there are no qualifying completions.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
+    until = now.isoformat()
+
+    join = ""
+    epic_clause = ""
+    params: list = [since, until]
+    if epic is not None:
+        join = "JOIN cards c ON c.id = t.card_id"
+        epic_clause = " AND c.epic = ?"
+        params.append(epic)
+
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            WITH done_events AS (
+                SELECT t.card_id, t.at AS done_at
+                FROM transitions t
+                {join}
+                WHERE t.to_col = 'done' AND t.at >= ? AND t.at < ?{epic_clause}
+            ),
+            cycle_pairs AS (
+                SELECT d.card_id, d.done_at, MAX(s.at) AS started_at
+                FROM done_events d
+                JOIN transitions s ON s.card_id = d.card_id
+                WHERE s.to_col = 'in_progress' AND s.at < d.done_at
+                GROUP BY d.card_id, d.done_at
+            )
+            SELECT done_at, started_at FROM cycle_pairs
+            """,
+            params,
+        ).fetchall()
+
+    if not rows:
+        return None
+
+    total = 0.0
+    count = 0
+    for row in rows:
+        try:
+            done = datetime.fromisoformat(row["done_at"].replace("Z", "+00:00"))
+            start = datetime.fromisoformat(row["started_at"].replace("Z", "+00:00"))
+            if done.tzinfo is None:
+                done = done.replace(tzinfo=timezone.utc)
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            total += (done - start).total_seconds() / 86400
+            count += 1
+        except (ValueError, AttributeError):
+            continue
+
+    return round(total / count, 1) if count else None
+
+
+def median_cycle_time_days(days: int, epic: str | None = None) -> float | None:
+    """Median days-to-complete for cards done in the last ``days`` days.
+
+    Days = done_at − created_at (same metric as cycle_time_histogram /
+    cycle_time_weekly). Returns a dict {median, p25, p75} or all-None when
+    there are no qualifying completions.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now   = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
+    until = now.isoformat()
+
+    epic_clause = " AND c.epic = ?" if epic is not None else ""
+    params: list = [since, until]
+    if epic is not None:
+        params.append(epic)
+
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT c.created_at, t.at AS done_at
+            FROM transitions t
+            JOIN cards c ON c.id = t.card_id
+            WHERE t.to_col = 'done'
+              AND t.at >= ? AND t.at < ?
+              AND c.created_at != ''{epic_clause}
+            """,
+            params,
+        ).fetchall()
+
+    durations: list[float] = []
+    for row in rows:
+        try:
+            done    = datetime.fromisoformat(row["done_at"].replace("Z", "+00:00"))
+            created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+            if done.tzinfo is None:
+                done = done.replace(tzinfo=timezone.utc)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            durations.append(max(0.0, (done - created).total_seconds() / 86400))
+        except (ValueError, AttributeError):
+            continue
+
+    if not durations:
+        return {"median": None, "p25": None, "p75": None}
+    durations.sort()
+    n = len(durations)
+
+    def _percentile(p: float) -> float:
+        idx = p / 100 * (n - 1)
+        lo, hi = int(idx), min(int(idx) + 1, n - 1)
+        return round(durations[lo] + (durations[hi] - durations[lo]) * (idx - lo), 1)
+
+    mid = n // 2
+    median = durations[mid] if n % 2 else (durations[mid - 1] + durations[mid]) / 2
+    return {
+        "median": round(median, 1),
+        "p25":    _percentile(25),
+        "p75":    _percentile(75),
+    }
 
 
 def transition_flow_weekly(weeks: int = 12, epic: str | None = None) -> list[dict]:
@@ -1080,4 +1433,688 @@ def transition_flow_weekly(weeks: int = 12, epic: str | None = None) -> list[dic
             bucket["completed"] += 1
 
     return [buckets[k] for k in sorted(buckets)]
+
+
+# ── Health page metrics ────────────────────────────────────────────────────────
+
+def stale_wip_cards(n: int = 10, epic: str | None = None) -> list[dict]:
+    """Cards in WIP (in_progress or review) sorted by days since last lane
+    transition, descending.
+
+    Each dict: {id, title, tags: list[str], priority: str, days_stale: int}
+    """
+    from datetime import datetime, timezone
+
+    clause = " AND c.epic = ?" if epic is not None else ""
+    params: list = ([epic] if epic is not None else [])
+
+    with _conn() as con:
+        card_rows = con.execute(
+            f"""
+            SELECT c.id, c.title, c.tags, c.priority,
+                   MAX(t.at) AS last_at
+            FROM cards c
+            LEFT JOIN transitions t ON t.card_id = c.id
+            WHERE c.archived = 0
+              AND c.lane IN ('in_progress', 'review')
+              {clause}
+            GROUP BY c.id
+            ORDER BY last_at ASC NULLS FIRST
+            LIMIT ?
+            """,
+            params + [n],
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    results = []
+    for r in card_rows:
+        last_at_str = r["last_at"]
+        if last_at_str:
+            try:
+                last_at = datetime.fromisoformat(last_at_str.replace("Z", "+00:00"))
+                if last_at.tzinfo is None:
+                    last_at = last_at.replace(tzinfo=timezone.utc)
+                days_stale = max(0, (now - last_at).days)
+            except ValueError:
+                days_stale = 0
+        else:
+            days_stale = 0
+        raw_tags = r["tags"] or ""
+        tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        results.append({
+            "id": r["id"],
+            "title": r["title"],
+            "tags": tags,
+            "priority": r["priority"] or "medium",
+            "days_stale": days_stale,
+        })
+    return results
+
+
+def stale_wip_cards_started(min_days: int = 5, epic: str | None = None) -> list[dict]:
+    """WIP cards (in_progress or review) where days since last in_progress
+    transition exceeds *min_days*, sorted by that age descending.
+
+    Each dict: {id, number, title, tags, priority, lane, days_started}
+    """
+    from datetime import datetime, timezone
+
+    clause = " AND c.epic = ?" if epic is not None else ""
+    params: list = [epic] if epic is not None else []
+
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT c.id, c.number, c.title, c.tags, c.priority, c.lane,
+                   MAX(t.at) AS started_at
+            FROM cards c
+            JOIN transitions t ON t.card_id = c.id
+            WHERE c.archived = 0
+              AND c.lane IN ('in_progress', 'review')
+              AND t.to_col = 'in_progress'
+              {clause}
+            GROUP BY c.id
+            ORDER BY started_at ASC NULLS FIRST
+            """,
+            params,
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    results = []
+    for r in rows:
+        started_at_str = r["started_at"]
+        if started_at_str:
+            try:
+                started_at = datetime.fromisoformat(
+                    started_at_str.replace("Z", "+00:00")
+                )
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=timezone.utc)
+                days_started = max(0, (now - started_at).days)
+            except ValueError:
+                days_started = 0
+        else:
+            days_started = 0
+        if days_started > min_days:
+            raw_tags = r["tags"] or ""
+            tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+            results.append({
+                "id": r["id"],
+                "number": r["number"],
+                "title": r["title"],
+                "tags": tags,
+                "priority": r["priority"] or "medium",
+                "lane": r["lane"],
+                "days_started": days_started,
+            })
+
+    results.sort(key=lambda x: x["days_started"], reverse=True)
+    return results
+
+
+def backlog_aged_cards(epic: str | None = None) -> list[dict]:
+    """Backlog cards with age > 1.5 × median backlog age, sorted by age desc.
+
+    Each dict: {id, number, title, priority, epic, days_old}
+    Returns an empty list when there are no backlog cards.
+    """
+    from datetime import datetime, timezone
+
+    clause = " AND epic = ?" if epic is not None else ""
+    params = (epic,) if epic is not None else ()
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT id, number, title, created_at, priority, epic
+            FROM cards
+            WHERE archived = 0 AND lane = 'backlog'
+              AND created_at != ''{clause}
+            """,
+            params,
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    cards_with_age: list[tuple[float, dict]] = []
+    for r in rows:
+        raw = r["created_at"]
+        try:
+            if "T" in raw:
+                d = datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S").replace(
+                    tzinfo=timezone.utc
+                )
+            else:
+                d = datetime.strptime(raw[:10], "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+        except ValueError:
+            continue
+        age = (now - d).total_seconds() / 86400
+        cards_with_age.append((age, dict(r)))
+
+    if not cards_with_age:
+        return []
+
+    ages = sorted(a for a, _ in cards_with_age)
+    n = len(ages)
+    mid = n // 2
+    median = ages[mid] if n % 2 else (ages[mid - 1] + ages[mid]) / 2
+    threshold = 1.5 * median
+
+    result = []
+    for age, r in cards_with_age:
+        if age > threshold:
+            result.append({
+                "id": r["id"],
+                "number": r["number"],
+                "title": r["title"],
+                "priority": r["priority"] or "medium",
+                "epic": r["epic"] or "",
+                "days_old": round(age, 1),
+            })
+
+    result.sort(key=lambda x: x["days_old"], reverse=True)
+    return result
+
+
+def backlog_aging_timeseries(days: int = 28, epic: str | None = None) -> list[dict]:
+    """Daily min/avg/max/median/p25/p75 age of cards currently in the Backlog lane.
+
+    Spec: backlog-only, age from created_at. Projects current state backward
+    (same approximation as cfd_data).
+
+    Returns: [{"date": str, "min_age": int, "avg_age": float, "max_age": int,
+              "median_age": float, "p25_age": float, "p75_age": float}, ...]
+    """
+    from datetime import date as _date, datetime, timedelta, timezone
+    import statistics
+
+    clause = " AND epic = ?" if epic is not None else ""
+    params = (epic,) if epic is not None else ()
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT created_at FROM cards
+            WHERE archived = 0 AND lane = 'backlog' AND created_at != ''{clause}
+            """,
+            params,
+        ).fetchall()
+
+    def _parse(raw: str) -> _date | None:
+        if not raw:
+            return None
+        try:
+            return datetime.strptime(raw[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    created_dates = [d for d in (_parse(r["created_at"]) for r in rows) if d is not None]
+    today = datetime.now(timezone.utc).date()
+    result = []
+    for i in range(days - 1, -1, -1):
+        d = today - timedelta(days=i)
+        ages = [(d - cd).days for cd in created_dates if cd <= d and (d - cd).days >= 0]
+        if ages:
+            sorted_ages = sorted(ages)
+            n = len(sorted_ages)
+            median = statistics.median(sorted_ages)
+            p25 = sorted_ages[n // 4] if n >= 4 else sorted_ages[0]
+            p75 = sorted_ages[(3 * n) // 4] if n >= 4 else sorted_ages[-1]
+            result.append({
+                "date": str(d),
+                "min_age": min(ages),
+                "avg_age": round(sum(ages) / len(ages), 1),
+                "max_age": max(ages),
+                "median_age": median,
+                "p25_age": float(p25),
+                "p75_age": float(p75),
+            })
+        else:
+            result.append({"date": str(d), "min_age": 0, "avg_age": 0.0, "max_age": 0,
+                          "median_age": 0.0, "p25_age": 0.0, "p75_age": 0.0})
+    return result
+
+
+def cycle_time_histogram(days: int = 28, epic: str | None = None) -> dict:
+    """Distribution of days-to-complete for cards done in the last ``days`` days.
+
+    Days = done_at − created_at, ceiling to nearest whole day.
+    Returns {"1": n, "2": n, "3": n, "4": n, "5": n, "6+": n}.
+    """
+    import math
+    from datetime import datetime, timedelta, timezone
+
+    now   = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
+    until = now.isoformat()
+
+    epic_clause = " AND c.epic = ?" if epic is not None else ""
+    params: list = [since, until]
+    if epic is not None:
+        params.append(epic)
+
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT c.created_at, t.at AS done_at
+            FROM transitions t
+            JOIN cards c ON c.id = t.card_id
+            WHERE t.to_col = 'done'
+              AND t.at >= ? AND t.at < ?
+              AND c.created_at != ''{epic_clause}
+            """,
+            params,
+        ).fetchall()
+
+    buckets: dict[str, int] = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6+": 0}
+    for row in rows:
+        try:
+            done    = datetime.fromisoformat(row["done_at"].replace("Z", "+00:00"))
+            created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+            if done.tzinfo is None:
+                done = done.replace(tzinfo=timezone.utc)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            ct = (done - created).total_seconds() / 86400
+            b  = math.ceil(max(ct, 0.01))
+            if b >= 6:
+                buckets["6+"] += 1
+            else:
+                buckets[str(b)] = buckets.get(str(b), 0) + 1
+        except (ValueError, AttributeError):
+            continue
+    return buckets
+
+
+def wip_composition(epic: str | None = None) -> dict:
+    """WIP (in_progress + review) breakdown by tag-type and priority.
+
+    Returns:
+        {"by_tag": {"bugfix": int, "feature": int, "enhancement": int, "other": int},
+         "by_priority": {"high": int, "medium": int, "low": int},
+         "total": int}
+    """
+    clause = " AND epic = ?" if epic is not None else ""
+    params = (epic,) if epic is not None else ()
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT tags, priority FROM cards
+            WHERE archived = 0 AND lane IN ('in_progress', 'review'){clause}
+            """,
+            params,
+        ).fetchall()
+    _VALID_PRI = {"high", "medium", "low"}
+    TYPE_TAGS = {"bugfix", "feature", "enhancement"}
+    by_tag: dict[str, int] = {"bugfix": 0, "feature": 0, "enhancement": 0, "other": 0}
+    by_priority: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+    for r in rows:
+        pri = (r["priority"] or "medium").lower()
+        if pri not in _VALID_PRI:
+            pri = "medium"
+        by_priority[pri] += 1
+        raw = r["tags"] or ""
+        tags = [t.strip() for t in raw.split(",") if t.strip()]
+        tag = next((t for t in tags if t in TYPE_TAGS), None)
+        by_tag[tag if tag else "other"] = by_tag.get(tag if tag else "other", 0) + 1
+    return {"by_tag": by_tag, "by_priority": by_priority, "total": len(rows)}
+
+
+def completed_composition(days: int = 28, epic: str | None = None) -> dict:
+    """Completed-cards breakdown by tag-type and priority for the last ``days`` days.
+
+    Same structure as wip_composition().
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
+    epic_clause = " AND c.epic = ?" if epic is not None else ""
+    params: list = [since] + ([epic] if epic is not None else [])
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT DISTINCT c.id, c.tags, c.priority
+            FROM transitions t
+            JOIN cards c ON c.id = t.card_id
+            WHERE t.to_col = 'done' AND t.at >= ?{epic_clause}
+            """,
+            params,
+        ).fetchall()
+    _VALID_PRI = {"high", "medium", "low"}
+    TYPE_TAGS = {"bugfix", "feature", "enhancement"}
+    by_tag: dict[str, int] = {"bugfix": 0, "feature": 0, "enhancement": 0, "other": 0}
+    by_priority: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+    for r in rows:
+        pri = (r["priority"] or "medium").lower()
+        if pri not in _VALID_PRI:
+            pri = "medium"
+        by_priority[pri] += 1
+        raw = r["tags"] or ""
+        tags = [t.strip() for t in raw.split(",") if t.strip()]
+        tag = next((t for t in tags if t in TYPE_TAGS), None)
+        by_tag[tag if tag else "other"] = by_tag.get(tag if tag else "other", 0) + 1
+    return {"by_tag": by_tag, "by_priority": by_priority, "total": len(rows)}
+
+
+def daily_throughput_wip(days: int = 28, epic: str | None = None) -> list[dict]:
+    """Per-day WIP count and 7-day rolling throughput for the trend chart.
+
+    Returns [{"date": str, "wip": int, "throughput_7d": float | None}, ...] oldest first.
+    throughput_7d = completed / started over trailing 7 days; None when no starts.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    cfd = cfd_data(days + 7, epic=epic)
+    cfd_by_date: dict[str, dict] = {r["date"]: r for r in cfd}
+
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=days + 7)).isoformat()
+    join = ""
+    epic_clause = ""
+    sql_params: list = [cutoff]
+    if epic is not None:
+        join = "JOIN cards c ON c.id = t.card_id"
+        epic_clause = " AND c.epic = ?"
+        sql_params.append(epic)
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT date(t.at) AS day, t.to_col, count(*) AS cnt
+            FROM transitions t {join}
+            WHERE t.at >= ?{epic_clause}
+            GROUP BY date(t.at), t.to_col
+            """,
+            sql_params,
+        ).fetchall()
+    daily_completed: dict[str, int] = {}
+    daily_started: dict[str, int] = {}
+    for r in rows:
+        day = r["day"]
+        if r["to_col"] == "done":
+            daily_completed[day] = daily_completed.get(day, 0) + r["cnt"]
+        elif r["to_col"] == "in_progress":
+            daily_started[day] = daily_started.get(day, 0) + r["cnt"]
+
+    today = datetime.now(timezone.utc).date()
+    result = []
+    for i in range(days - 1, -1, -1):
+        d = today - timedelta(days=i)
+        d_str = str(d)
+        cfd_row = cfd_by_date.get(d_str, {})
+        wip = cfd_row.get("in_progress", 0) + cfd_row.get("review", 0)
+        w_completed = sum(daily_completed.get(str(d - timedelta(days=j)), 0) for j in range(7))
+        w_started = sum(daily_started.get(str(d - timedelta(days=j)), 0) for j in range(7))
+        tp = round(w_completed / w_started, 2) if w_started > 0 else None
+        result.append({"date": d_str, "wip": wip, "throughput_7d": tp})
+    return result
+
+
+def daily_pull_rate(days: int = 28, epic: str | None = None) -> list[dict]:
+    """Per-day 7-day rolling pull rate (started ÷ created) for the trend chart.
+
+    Returns [{"date": str, "pull_rate_7d": float | None}, ...] oldest first.
+    pull_rate_7d = started / created over trailing 7 days; None when no creates.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days + 7)).isoformat()
+    join = ""
+    epic_clause = ""
+    sql_params: list = [cutoff]
+    if epic is not None:
+        join = "JOIN cards c ON c.id = t.card_id"
+        epic_clause = " AND c.epic = ?"
+        sql_params.append(epic)
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT date(t.at) AS day, t.from_col, t.to_col, count(*) AS cnt
+            FROM transitions t {join}
+            WHERE t.at >= ?{epic_clause}
+            GROUP BY date(t.at), t.from_col, t.to_col
+            """,
+            sql_params,
+        ).fetchall()
+    daily_created: dict[str, int] = {}
+    daily_started: dict[str, int] = {}
+    for r in rows:
+        day = r["day"]
+        if r["from_col"] is None:  # card entering board = created
+            daily_created[day] = daily_created.get(day, 0) + r["cnt"]
+        if r["to_col"] == "in_progress":
+            daily_started[day] = daily_started.get(day, 0) + r["cnt"]
+
+    today = datetime.now(timezone.utc).date()
+    result = []
+    for i in range(days - 1, -1, -1):
+        d = today - timedelta(days=i)
+        d_str = str(d)
+        w_created = sum(daily_created.get(str(d - timedelta(days=j)), 0) for j in range(7))
+        w_started = sum(daily_started.get(str(d - timedelta(days=j)), 0) for j in range(7))
+        pr = round(w_started / w_created, 2) if w_created > 0 else None
+        result.append({"date": d_str, "pull_rate_7d": pr})
+    return result
+
+
+def cycle_time_rolling(days: int = 84, window: int = 7, epic: str | None = None) -> list[dict]:
+    """Daily rolling-window median / P25 / P75 of days-to-complete.
+
+    For each day in the last *days* days, aggregates all cards whose
+    done_at falls within the trailing *window* days (inclusive). Returns
+    oldest-first: [{"date": "YYYY-MM-DD", "median": float|None,
+    "p25": float|None, "p75": float|None, "count": int}, ...]
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now    = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=days + window)).isoformat()
+
+    epic_clause = " AND c.epic = ?" if epic is not None else ""
+    params: list = [cutoff]
+    if epic is not None:
+        params.append(epic)
+
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT c.created_at, t.at AS done_at
+            FROM transitions t
+            JOIN cards c ON c.id = t.card_id
+            WHERE t.to_col = 'done'
+              AND t.at >= ?
+              AND c.created_at != ''{epic_clause}
+            """,
+            params,
+        ).fetchall()
+
+    def _percentile(sorted_vals: list[float], p: float) -> float:
+        if not sorted_vals:
+            return 0.0
+        idx = p * (len(sorted_vals) - 1)
+        lo, hi = int(idx), min(int(idx) + 1, len(sorted_vals) - 1)
+        return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (idx - lo)
+
+    # index completed cards by done date
+    by_date: dict[str, list[float]] = {}
+    for row in rows:
+        try:
+            done    = datetime.fromisoformat(row["done_at"].replace("Z", "+00:00"))
+            created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+            if done.tzinfo is None:
+                done = done.replace(tzinfo=timezone.utc)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            day  = str(done.date())
+            days_taken = max(0.0, (done - created).total_seconds() / 86400)
+            by_date.setdefault(day, []).append(days_taken)
+        except (ValueError, AttributeError):
+            continue
+
+    today  = now.date()
+    result = []
+    for i in range(days - 1, -1, -1):
+        d      = today - timedelta(days=i)
+        window_vals: list[float] = []
+        for j in range(window):
+            window_vals.extend(by_date.get(str(d - timedelta(days=j)), []))
+        cts = sorted(window_vals)
+        if cts:
+            n      = len(cts)
+            mid    = n // 2
+            median = cts[mid] if n % 2 else (cts[mid - 1] + cts[mid]) / 2
+            result.append({
+                "date":   str(d),
+                "median": round(median, 2),
+                "p25":    round(_percentile(cts, 0.25), 2),
+                "p75":    round(_percentile(cts, 0.75), 2),
+                "count":  n,
+            })
+        else:
+            result.append({"date": str(d), "median": None, "p25": None, "p75": None, "count": 0})
+    return result
+
+
+def cycle_time_weekly(weeks: int = 12, epic: str | None = None) -> list[dict]:
+    """Per-ISO-week median / P25 / P75 days-to-complete for cards done that week.
+
+    Days = done_at − created_at for every card that transitioned to 'done'
+    in the given Monday–Sunday week. Returns oldest-first:
+    [{"week_start": "YYYY-MM-DD", "median": float|None,
+      "p25": float|None, "p75": float|None, "count": int}, ...]
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now    = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=weeks * 7)).isoformat()
+
+    epic_clause = " AND c.epic = ?" if epic is not None else ""
+    params: list = [cutoff]
+    if epic is not None:
+        params.append(epic)
+
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT c.created_at, t.at AS done_at
+            FROM transitions t
+            JOIN cards c ON c.id = t.card_id
+            WHERE t.to_col = 'done'
+              AND t.at >= ?
+              AND c.created_at != ''{epic_clause}
+            """,
+            params,
+        ).fetchall()
+
+    def _percentile(sorted_vals: list[float], p: float) -> float:
+        if not sorted_vals:
+            return 0.0
+        idx = p * (len(sorted_vals) - 1)
+        lo, hi = int(idx), min(int(idx) + 1, len(sorted_vals) - 1)
+        return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (idx - lo)
+
+    # bucket by ISO-week start (Monday of the done_at date)
+    by_week: dict[str, list[float]] = {}
+    for row in rows:
+        try:
+            done    = datetime.fromisoformat(row["done_at"].replace("Z", "+00:00"))
+            created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+            if done.tzinfo is None:
+                done = done.replace(tzinfo=timezone.utc)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            days   = max(0.0, (done - created).total_seconds() / 86400)
+            monday = str(done.date() - timedelta(days=done.weekday()))
+            by_week.setdefault(monday, []).append(days)
+        except (ValueError, AttributeError):
+            continue
+
+    # build result for the last *weeks* weeks, oldest first
+    today       = now.date()
+    this_monday = today - timedelta(days=today.weekday())
+    result      = []
+    for w in range(weeks - 1, -1, -1):
+        monday = this_monday - timedelta(weeks=w)
+        cts    = sorted(by_week.get(str(monday), []))
+        if cts:
+            n      = len(cts)
+            mid    = n // 2
+            median = cts[mid] if n % 2 else (cts[mid - 1] + cts[mid]) / 2
+            result.append({
+                "week_start": str(monday),
+                "median": round(median, 2),
+                "p25":    round(_percentile(cts, 0.25), 2),
+                "p75":    round(_percentile(cts, 0.75), 2),
+                "count":  n,
+            })
+        else:
+            result.append({
+                "week_start": str(monday),
+                "median": None,
+                "p25":    None,
+                "p75":    None,
+                "count":  0,
+            })
+    return result
+
+
+def cycle_time_trend(days: int = 28, epic: str | None = None) -> list[dict]:
+    """Per-day 7-day rolling average cycle time for the trend chart.
+
+    Returns [{"date": str, "avg_ct_7d": float | None}, ...] oldest first.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=days + 7)).isoformat()
+    join = ""
+    epic_clause = ""
+    params: list = [cutoff]
+    if epic is not None:
+        join = "JOIN cards c ON c.id = t.card_id"
+        epic_clause = " AND c.epic = ?"
+        params.append(epic)
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            WITH done_events AS (
+                SELECT t.card_id, t.at AS done_at
+                FROM transitions t {join}
+                WHERE t.to_col = 'done' AND t.at >= ?{epic_clause}
+            ),
+            cycle_pairs AS (
+                SELECT d.card_id, d.done_at, MAX(s.at) AS started_at
+                FROM done_events d
+                JOIN transitions s ON s.card_id = d.card_id
+                WHERE s.to_col = 'in_progress' AND s.at < d.done_at
+                GROUP BY d.card_id, d.done_at
+            )
+            SELECT date(done_at) AS day, done_at, started_at FROM cycle_pairs
+            """,
+            params,
+        ).fetchall()
+    by_date: dict[str, list[float]] = {}
+    for row in rows:
+        day = row["day"]
+        try:
+            done = datetime.fromisoformat(row["done_at"].replace("Z", "+00:00"))
+            start = datetime.fromisoformat(row["started_at"].replace("Z", "+00:00"))
+            if done.tzinfo is None:
+                done = done.replace(tzinfo=timezone.utc)
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            ct = (done - start).total_seconds() / 86400
+            by_date.setdefault(day, []).append(max(ct, 0.0))
+        except (ValueError, AttributeError):
+            continue
+    today = datetime.now(timezone.utc).date()
+    result = []
+    for i in range(days - 1, -1, -1):
+        d = today - timedelta(days=i)
+        d_str = str(d)
+        window: list[float] = []
+        for j in range(7):
+            window.extend(by_date.get(str(d - timedelta(days=j)), []))
+        avg_ct = round(sum(window) / len(window), 2) if window else None
+        result.append({"date": d_str, "avg_ct_7d": avg_ct})
+    return result
 

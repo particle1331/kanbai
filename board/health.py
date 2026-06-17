@@ -151,6 +151,42 @@ def compute_signals(epic: str | None = None) -> list[dict]:
         ),
     })
 
+    days_since_started: int | None = sqlite_cache.days_since_last_started(epic=epic)
+    signals.append({
+        "key": "days_since_started",
+        "label": "Days since last started",
+        "value": days_since_started,
+        "unit": "days",
+        "band": settings.band(
+            days_since_started if open_count > 0 else None,
+            settings.HEALTH_LAST_STARTED_WATCH_DAYS,
+            settings.HEALTH_LAST_STARTED_BAD_DAYS,
+        ),
+        "message": (
+            "No cards started yet" if days_since_started is None
+            else "Last card started today" if days_since_started == 0
+            else f"No card started in {days_since_started}d"
+        ),
+    })
+
+    days_since_created: int | None = sqlite_cache.days_since_last_created(epic=epic)
+    signals.append({
+        "key": "days_since_created",
+        "label": "Days since last created",
+        "value": days_since_created,
+        "unit": "days",
+        "band": settings.band(
+            days_since_created,
+            settings.HEALTH_LAST_CREATED_WATCH_DAYS,
+            settings.HEALTH_LAST_CREATED_BAD_DAYS,
+        ),
+        "message": (
+            "No cards created yet" if days_since_created is None
+            else "Last card created today" if days_since_created == 0
+            else f"No card created in {days_since_created}d"
+        ),
+    })
+
     # ── Blocker count ─────────────────────────────────────────────────────────
     blocker_count = sqlite_cache.count_blocker_cards(epic=epic)
     signals.append({

@@ -347,18 +347,38 @@ def _draw_edge(
         # Relationship-aware endpoint annotations.
         anno_style = ft.TextStyle(size=9, color=color, weight=ft.FontWeight.W_700)
         inverse = _INVERSE_LINK.get(link_type, link_type)
+
+        # Annotations are placed *outward* from each endpoint — away from the
+        # edge centre — so they never overlap the line or each other.
+        # cv.Text anchors at top-left, so horizontal alignment depends on
+        # which direction the label extends:
+        #   • edge goes right  → from-label goes left  → right-align (subtract width)
+        #   • edge goes left   → to-label   goes left  → right-align
+        #   • edge is vertical → label is centered horizontally (subtract half width)
+        _OUT   = 14    # px outward along edge direction
+        _PERP  = 6     # px perpendicular (keeps label off the line)
+        _CW    = 5.5   # approx px per char at font-size 9
+        _TH    = 6     # half text height for vertical centering
+
         if to_num is not None:
-            bx = x1 + ux * 10 + nx * 8 - 4
-            by = y1 + uy * 10 + ny * 8 - 6
-            shapes.append(
-                cv.Text(bx, by, value=f"{link_type} #{to_num}", style=anno_style)
-            )
+            label = f"{link_type} #{to_num}"
+            bx = x1 - ux * _OUT + nx * _PERP
+            by = y1 - uy * _OUT + ny * _PERP - _TH
+            if ux > 0.1:          # edge goes right → label goes left → right-align
+                bx -= len(label) * _CW
+            elif abs(ux) <= 0.1:  # vertical edge → center horizontally
+                bx -= len(label) * _CW / 2
+            shapes.append(cv.Text(bx, by, value=label, style=anno_style))
+
         if from_num is not None:
-            hx = x2 - ux * 10 + nx * 8 - 4
-            hy = y2 - uy * 10 + ny * 8 - 6
-            shapes.append(
-                cv.Text(hx, hy, value=f"{inverse} #{from_num}", style=anno_style)
-            )
+            label = f"{inverse} #{from_num}"
+            hx = x2 + ux * _OUT + nx * _PERP
+            hy = y2 + uy * _OUT + ny * _PERP - _TH
+            if ux < -0.1:         # edge goes left → label goes left → right-align
+                hx -= len(label) * _CW
+            elif abs(ux) <= 0.1:  # vertical edge → center horizontally
+                hx -= len(label) * _CW / 2
+            shapes.append(cv.Text(hx, hy, value=label, style=anno_style))
 
 
 # ── GraphPage ──────────────────────────────────────────────────────────────────
@@ -718,41 +738,58 @@ class GraphPage:
         canvas_h = max(y + _CARD_H for _, y in positions.values()) + _PAD_TOP + 20.0
 
         # ── Edges ──────────────────────────────────────────────────────────────
-        # Edges between two cards in the SAME lane would all run down the lane's
-        # vertical centre and overlap. To keep cards aligned but make the edges
-        # distinguishable, fan their anchor points out horizontally: each such
-        # edge gets a unique x-offset spread across the card's width.
+        # Edges between two cards in the SAME lane (vertical) would all run
+        # down the lane centre and overlap — fan them horizontally.
+        # Edges between cards in the SAME ROW (horizontal) share the same y
+        # and overlap — fan them vertically within the card's height.
         same_lane_edges: dict[float, list[int]] = {}   # lane_x → edge indices
+        same_row_edges: dict[float, list[int]] = {}    # row_y  → edge indices
         for i, (fn, tn, _lt) in enumerate(edges):
             if fn not in positions or tn not in positions:
                 continue
-            fx, _fy = positions[fn]
-            tx, _ty = positions[tn]
+            fx, fy = positions[fn]
+            tx, ty = positions[tn]
             if fx == tx:   # same lane (identical x)
                 same_lane_edges.setdefault(fx, []).append(i)
+            elif fy == ty:  # same row (identical y, different lane)
+                same_row_edges.setdefault(fy, []).append(i)
 
-        edge_offset: dict[int, float] = {}
+        edge_x_offset: dict[int, float] = {}   # applied to x anchor (same-lane)
         for _lane_x, idxs in same_lane_edges.items():
             k = len(idxs)
             if k == 1:
-                edge_offset[idxs[0]] = 0.0
+                edge_x_offset[idxs[0]] = 0.0
                 continue
             # Spread offsets evenly across ~80% of the card width, centred on 0.
             span = _CARD_W * 0.8
             step = span / (k - 1)
             start = -span / 2
             for j, idx in enumerate(idxs):
-                edge_offset[idx] = start + j * step
+                edge_x_offset[idx] = start + j * step
+
+        edge_y_offset: dict[int, float] = {}   # applied to y anchor (same-row)
+        for _row_y, idxs in same_row_edges.items():
+            k = len(idxs)
+            if k == 1:
+                edge_y_offset[idxs[0]] = 0.0
+                continue
+            # Spread offsets evenly across ~80% of the card height, centred on 0.
+            span = _CARD_H * 0.8
+            step = span / (k - 1)
+            start = -span / 2
+            for j, idx in enumerate(idxs):
+                edge_y_offset[idx] = start + j * step
 
         shapes: list = []
         for i, (fn, tn, lt) in enumerate(edges):
             if fn not in positions or tn not in positions:
                 continue
-            off = edge_offset.get(i, 0.0)
+            x_off = edge_x_offset.get(i, 0.0)
+            y_off = edge_y_offset.get(i, 0.0)
             fx, fy = positions[fn]
             tx, ty = positions[tn]
-            fcx, fcy = fx + _CARD_W / 2 + off, fy + _CARD_H / 2
-            tcx, tcy = tx + _CARD_W / 2 + off, ty + _CARD_H / 2
+            fcx, fcy = fx + _CARD_W / 2 + x_off, fy + _CARD_H / 2 + y_off
+            tcx, tcy = tx + _CARD_W / 2 + x_off, ty + _CARD_H / 2 + y_off
             # Clip both ends to the card borders so the arrowhead lands in
             # the gap between cards (otherwise it hides under the tile).
             sx, sy = _clip_to_rect(fcx, fcy, tcx, tcy, _CARD_W / 2, _CARD_H / 2)
@@ -926,37 +963,53 @@ def open_graph_dialog(
         if positions else 200.0
     )
 
-    # ── Same-lane edge fanning ────────────────────────────────────────────────
+    # ── Edge fanning (same-lane: horizontal spread; same-row: vertical spread) ─
     same_lane_edges: dict[float, list[int]] = {}
+    same_row_edges: dict[float, list[int]] = {}
     for i, (fn, tn, _lt) in enumerate(edges):
         if fn not in positions or tn not in positions:
             continue
-        fx, _ = positions[fn]
-        tx, _ = positions[tn]
+        fx, fy = positions[fn]
+        tx, ty = positions[tn]
         if fx == tx:
             same_lane_edges.setdefault(fx, []).append(i)
+        elif fy == ty:
+            same_row_edges.setdefault(fy, []).append(i)
 
-    edge_offset: dict[int, float] = {}
+    edge_x_offset: dict[int, float] = {}
     for _lane_x, idxs in same_lane_edges.items():
         k = len(idxs)
         if k == 1:
-            edge_offset[idxs[0]] = 0.0
+            edge_x_offset[idxs[0]] = 0.0
             continue
         span = _CARD_W * 0.8
         step = span / (k - 1)
         start = -span / 2
         for j, idx in enumerate(idxs):
-            edge_offset[idx] = start + j * step
+            edge_x_offset[idx] = start + j * step
+
+    edge_y_offset: dict[int, float] = {}
+    for _row_y, idxs in same_row_edges.items():
+        k = len(idxs)
+        if k == 1:
+            edge_y_offset[idxs[0]] = 0.0
+            continue
+        span = _CARD_H * 0.8
+        step = span / (k - 1)
+        start = -span / 2
+        for j, idx in enumerate(idxs):
+            edge_y_offset[idx] = start + j * step
 
     shapes: list = []
     for i, (fn, tn, lt) in enumerate(edges):
         if fn not in positions or tn not in positions:
             continue
-        off = edge_offset.get(i, 0.0)
+        x_off = edge_x_offset.get(i, 0.0)
+        y_off = edge_y_offset.get(i, 0.0)
         fx, fy = positions[fn]
         tx, ty = positions[tn]
-        fcx, fcy = fx + _CARD_W / 2 + off, fy + _CARD_H / 2
-        tcx, tcy = tx + _CARD_W / 2 + off, ty + _CARD_H / 2
+        fcx, fcy = fx + _CARD_W / 2 + x_off, fy + _CARD_H / 2 + y_off
+        tcx, tcy = tx + _CARD_W / 2 + x_off, ty + _CARD_H / 2 + y_off
         sx, sy = _clip_to_rect(fcx, fcy, tcx, tcy, _CARD_W / 2, _CARD_H / 2)
         ex, ey = _clip_to_rect(tcx, tcy, fcx, fcy, _CARD_W / 2, _CARD_H / 2)
         _draw_edge(shapes, sx, sy, ex, ey, lt, from_num=fn, to_num=tn)

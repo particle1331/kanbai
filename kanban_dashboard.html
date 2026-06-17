@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kanban Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0D1B2A;
+    --surface:   #152234;
+    --surface2:  #1C2E45;
+    --border:    #1F3A55;
+    --cyan:      #00D4FF;
+    --cyan-dim:  rgba(0,212,255,0.12);
+    --amber:     #F5A623;
+    --amber-dim: rgba(245,166,35,0.15);
+    --red:       #FF4B4B;
+    --red-dim:   rgba(255,75,75,0.15);
+    --green:     #2ECC71;
+    --green-dim: rgba(46,204,113,0.12);
+    --text:      #E8EDF2;
+    --text-muted:#7A91A8;
+    --text-dim:  #4A6278;
+    --mono:      'JetBrains Mono', monospace;
+    --sans:      'Inter', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    display: flex;
+    min-height: 100vh;
+    font-size: 14px;
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: 200px;
+    min-height: 100vh;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .sidebar-logo {
+    padding: 24px 20px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-logo .logo-mark {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--cyan);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    display: block;
+  }
+
+  .sidebar-logo .logo-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .nav-section {
+    padding: 16px 0 8px;
+  }
+
+  .nav-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 0 20px 8px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 20px;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+    border-left: 2px solid transparent;
+  }
+
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+
+  .nav-item.active {
+    color: var(--cyan);
+    background: var(--cyan-dim);
+    border-left-color: var(--cyan);
+  }
+
+  .nav-icon { font-size: 14px; width: 16px; text-align: center; }
+
+  .sidebar-footer {
+    margin-top: auto;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    margin-right: 6px;
+    box-shadow: 0 0 6px var(--green);
+  }
+
+  /* ── MAIN ── */
+  .main {
+    flex: 1;
+    overflow-y: auto;
+    min-width: 0;
+  }
+
+  .page { display: none; padding: 28px 32px 48px; }
+  .page.active { display: block; }
+
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .page-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .page-subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 3px;
+  }
+
+  .timestamp {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  /* ── KPI CARDS ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .kpi-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 14px 0;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .kpi-card:hover { border-color: var(--cyan); }
+
+  .kpi-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+
+  .kpi-value {
+    font-family: var(--mono);
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .kpi-sub {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+  }
+
+  .kpi-bar {
+    height: 3px;
+    margin: 0 -14px;
+    border-radius: 0 0 8px 8px;
+  }
+
+  .kpi-bar.good  { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .kpi-bar.warn  { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .kpi-bar.bad   { background: var(--red);   box-shadow: 0 0 8px var(--red); }
+
+  .kpi-card.warn { border-color: rgba(245,166,35,0.4); }
+  .kpi-card.bad  { border-color: rgba(255,75,75,0.4); }
+
+  .kpi-value.warn { color: var(--amber); }
+  .kpi-value.bad  { color: var(--red); }
+
+  /* ── LAYOUT GRID ── */
+  .layout-grid {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .charts-col { display: flex; flex-direction: column; gap: 16px; }
+  .sidebar-col { display: flex; flex-direction: column; gap: 16px; }
+
+  .secondary-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  /* ── PANELS ── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .panel-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+
+  .badge-good  { background: var(--green-dim); color: var(--green); }
+  .badge-warn  { background: var(--amber-dim); color: var(--amber); }
+  .badge-bad   { background: var(--red-dim);   color: var(--red); }
+  .badge-info  { background: var(--cyan-dim);  color: var(--cyan); }
+
+  .panel-body { padding: 18px; }
+
+  .chart-wrap { position: relative; }
+  .chart-wrap canvas { width: 100% !important; }
+
+  /* ── SIDEBAR LISTS ── */
+  .stale-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+
+  .stale-item:last-child { border-bottom: none; }
+
+  .stale-name {
+    color: var(--text);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+  }
+
+  .stale-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .tag-bugfix      { background: rgba(255,75,75,0.15);  color: #FF4B4B; }
+  .tag-feature     { background: rgba(0,212,255,0.12);  color: #00D4FF; }
+  .tag-enhancement { background: rgba(46,204,113,0.12); color: #2ECC71; }
+
+  .stale-days {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    min-width: 40px;
+    text-align: right;
+  }
+
+  .days-warn { color: var(--amber); }
+  .days-bad  { color: var(--red); }
+  .days-ok   { color: var(--text-muted); }
+
+  .blocker-item {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+
+  .blocker-item:last-child { border-bottom: none; }
+
+  .blocker-name { color: var(--text); font-weight: 500; margin-bottom: 4px; }
+
+  .blocker-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .blocker-arrow { color: var(--red); font-size: 10px; }
+
+  /* ── PIE ROW ── */
+  .pie-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .pie-panel { padding: 16px; }
+
+  .pie-wrap {
+    position: relative;
+    width: 120px;
+    height: 120px;
+    margin: 12px auto;
+  }
+
+  .pie-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .legend-pct {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    margin-left: auto;
+  }
+
+  /* ── CFD full width ── */
+  .cfd-panel { margin-bottom: 16px; }
+  .cfd-panel .panel-body { padding: 18px; }
+  .cfd-panel canvas { height: 200px !important; }
+
+  /* ── REPORTS PAGE ── */
+  .report-section { margin-bottom: 32px; }
+
+  .report-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .report-section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  table.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+
+  table.report-table th {
+    background: var(--surface2);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  table.report-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: middle;
+  }
+
+  table.report-table tr:last-child td { border-bottom: none; }
+  table.report-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  td.metric-name { color: var(--text-muted); font-size: 12px; }
+
+  td.val-num {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  td.delta-pos { font-family: var(--mono); color: var(--green); font-weight: 600; text-align: center; }
+  td.delta-neg { font-family: var(--mono); color: var(--red);   font-weight: 600; text-align: center; }
+  td.delta-neu { font-family: var(--mono); color: var(--text-muted); text-align: center; }
+
+  td.thresh-warn { background: var(--amber-dim); color: var(--amber); font-size: 11px; }
+  td.thresh-bad  { background: var(--red-dim);   color: var(--red);   font-size: 11px; }
+
+  /* composition matrix */
+  table.matrix th, table.matrix td {
+    text-align: center;
+  }
+  table.matrix td:first-child {
+    text-align: left;
+    color: var(--text-muted);
+  }
+  table.matrix td.total-row {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--cyan);
+    background: var(--surface2);
+  }
+  table.matrix td.mat-val {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  /* notes area */
+  .notes-area {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    min-height: 80px;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+  }
+
+  .month-selector {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .month-selector select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: var(--sans);
+    outline: none;
+    cursor: pointer;
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  @media (max-width: 1200px) {
+    .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+    .layout-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <span class="logo-mark">FlowBoard</span>
+    <span class="logo-sub">Team Kanban</span>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Monitor</div>
+    <div class="nav-item active" onclick="showPage('health', this)">
+      <span class="nav-icon">⬡</span> Project Health
+    </div>
+    <div class="nav-item" onclick="showPage('reports', this)">
+      <span class="nav-icon">▤</span> Monthly Report
+    </div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Manage</div>
+    <div class="nav-item" onclick="">
+      <span class="nav-icon">◈</span> Board
+    </div>
+    <div class="nav-item" onclick="">
+      <span class="nav-icon">◎</span> Backlog
+    </div>
+  </div>
+  <div class="sidebar-footer">
+    <span class="status-dot"></span>Live · Updated now
+  </div>
+</nav>
+
+<!-- MAIN -->
+<main class="main">
+
+  <!-- ── HEALTH PAGE ── -->
+  <div class="page active" id="page-health">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Project Health</div>
+        <div class="page-subtitle">Real-time operational view · 28-day window</div>
+      </div>
+      <div class="timestamp">Sun 15 Jun 2026 · 09:41</div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="kpi-grid">
+      <div class="kpi-card good">
+        <div class="kpi-label">Completed 7d</div>
+        <div class="kpi-value" id="kpi-c7">8</div>
+        <div class="kpi-sub">tasks done</div>
+        <div class="kpi-bar good"></div>
+      </div>
+      <div class="kpi-card good">
+        <div class="kpi-label">Completed 28d</div>
+        <div class="kpi-value" id="kpi-c28">29</div>
+        <div class="kpi-sub">tasks done</div>
+        <div class="kpi-bar good"></div>
+      </div>
+      <div class="kpi-card warn">
+        <div class="kpi-label">WIP Now</div>
+        <div class="kpi-value warn" id="kpi-wip">6</div>
+        <div class="kpi-sub">in-progress</div>
+        <div class="kpi-bar warn"></div>
+      </div>
+      <div class="kpi-card good">
+        <div class="kpi-label">Throughput 7d</div>
+        <div class="kpi-value" id="kpi-tp">0.73</div>
+        <div class="kpi-sub">completed / started</div>
+        <div class="kpi-bar good"></div>
+      </div>
+      <div class="kpi-card bad">
+        <div class="kpi-label">Blockers</div>
+        <div class="kpi-value bad" id="kpi-bl">3</div>
+        <div class="kpi-sub">active</div>
+        <div class="kpi-bar bad"></div>
+      </div>
+      <div class="kpi-card warn">
+        <div class="kpi-label">Due in 3d</div>
+        <div class="kpi-value warn" id="kpi-due">4</div>
+        <div class="kpi-sub">tasks</div>
+        <div class="kpi-bar warn"></div>
+      </div>
+    </div>
+
+    <!-- Main layout: charts + sidebar -->
+    <div class="layout-grid">
+
+      <!-- Charts column -->
+      <div class="charts-col">
+
+        <!-- Throughput + WIP trend -->
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Throughput &amp; WIP Trend</span>
+            <span class="panel-badge badge-warn">WIP elevated</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart-wrap" style="height:200px">
+              <canvas id="chartTrend"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cycle time histogram -->
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Cycle Time Distribution</span>
+            <span class="panel-badge badge-good">72% within 3d</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart-wrap" style="height:160px">
+              <canvas id="chartHist"></canvas>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Sidebar column -->
+      <div class="sidebar-col">
+
+        <!-- Stale WIP -->
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Stale WIP</span>
+            <span class="panel-badge badge-bad">2 critical</span>
+          </div>
+          <div class="panel-body" style="padding: 4px 16px 12px">
+            <div class="stale-item">
+              <div>
+                <div class="stale-name">Auth token refresh</div>
+                <span class="stale-tag tag-bugfix">bugfix</span>
+              </div>
+              <div class="stale-days days-bad">6d</div>
+            </div>
+            <div class="stale-item">
+              <div>
+                <div class="stale-name">Export CSV endpoint</div>
+                <span class="stale-tag tag-feature">feature</span>
+              </div>
+              <div class="stale-days days-bad">5d</div>
+            </div>
+            <div class="stale-item">
+              <div>
+                <div class="stale-name">Search indexer perf</div>
+                <span class="stale-tag tag-enhancement">enhancement</span>
+              </div>
+              <div class="stale-days days-warn">4d</div>
+            </div>
+            <div class="stale-item">
+              <div>
+                <div class="stale-name">Dashboard filters</div>
+                <span class="stale-tag tag-feature">feature</span>
+              </div>
+              <div class="stale-days days-ok">2d</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Backlog Aging -->
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Backlog Aging</span>
+            <span class="panel-badge badge-warn">spread 18d</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart-wrap" style="height:140px">
+              <canvas id="chartAging"></canvas>
+            </div>
+            <div style="display:flex; gap:16px; margin-top:10px; font-size:11px;">
+              <div><span style="color:#00D4FF; font-family:var(--mono); font-weight:700;">3d</span><br><span style="color:var(--text-dim)">min</span></div>
+              <div><span style="color:#F5A623; font-family:var(--mono); font-weight:700;">11d</span><br><span style="color:var(--text-dim)">avg</span></div>
+              <div><span style="color:#FF4B4B; font-family:var(--mono); font-weight:700;">21d</span><br><span style="color:var(--text-dim)">max</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Blockers -->
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Blockers</span>
+            <span class="panel-badge badge-bad">3 active</span>
+          </div>
+          <div class="panel-body" style="padding: 4px 16px 12px">
+            <div class="blocker-item">
+              <div class="blocker-name">Auth token refresh</div>
+              <div class="blocker-meta">
+                <span class="blocker-arrow">◀</span>
+                blocked by <strong style="color:var(--text)">JWT lib update</strong>
+              </div>
+            </div>
+            <div class="blocker-item">
+              <div class="blocker-name">Export CSV endpoint</div>
+              <div class="blocker-meta">
+                <span class="blocker-arrow">◀</span>
+                blocked by <strong style="color:var(--text)">S3 perms</strong>
+              </div>
+            </div>
+            <div class="blocker-item">
+              <div class="blocker-name">Payment webhook</div>
+              <div class="blocker-meta">
+                <span class="blocker-arrow">◀</span>
+                blocked by <strong style="color:var(--text)">Stripe review</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Pie row -->
+    <div class="pie-row">
+      <div class="panel pie-panel">
+        <div class="panel-header" style="padding:0 0 10px"><span class="panel-title">WIP by Type</span></div>
+        <div class="pie-wrap"><canvas id="pieType"></canvas></div>
+        <div class="pie-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#FF4B4B"></div>Bugfix<span class="legend-pct">33%</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:#00D4FF"></div>Feature<span class="legend-pct">50%</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:#2ECC71"></div>Enhancement<span class="legend-pct">17%</span></div>
+        </div>
+      </div>
+      <div class="panel pie-panel">
+        <div class="panel-header" style="padding:0 0 10px"><span class="panel-title">WIP by Priority</span></div>
+        <div class="pie-wrap"><canvas id="piePriority"></canvas></div>
+        <div class="pie-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#FF4B4B"></div>High<span class="legend-pct">50%</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:#F5A623"></div>Medium<span class="legend-pct">33%</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:#4A6278"></div>Low<span class="legend-pct">17%</span></div>
+        </div>
+      </div>
+      <div class="panel pie-panel">
+        <div class="panel-header" style="padding:0 0 10px"><span class="panel-title">Completed by Type (28d)</span></div>
+        <div class="pie-wrap"><canvas id="pieCompleted"></canvas></div>
+        <div class="pie-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#FF4B4B"></div>Bugfix<span class="legend-pct">41%</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:#00D4FF"></div>Feature<span class="legend-pct">38%</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:#2ECC71"></div>Enhancement<span class="legend-pct">21%</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CFD -->
+    <div class="panel cfd-panel">
+      <div class="panel-header">
+        <span class="panel-title">Cumulative Flow Diagram</span>
+        <span class="panel-badge badge-info">28d</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-wrap" style="height:200px">
+          <canvas id="chartCFD"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Secondary row -->
+    <div class="secondary-row">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Created vs Completed</span>
+          <span class="panel-badge badge-warn">3 of 4 weeks OK</span>
+        </div>
+        <div class="panel-body">
+          <div class="chart-wrap" style="height:160px">
+            <canvas id="chartCreated"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Cycle Time Trend</span>
+          <span class="panel-badge badge-good">avg 2.4d</span>
+        </div>
+        <div class="panel-body">
+          <div class="chart-wrap" style="height:160px">
+            <canvas id="chartCycle"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /health page -->
+
+  <!-- ── REPORTS PAGE ── -->
+  <div class="page" id="page-reports">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Monthly Report</div>
+        <div class="page-subtitle">Planning quality review · one paragraph per anomaly</div>
+      </div>
+      <div class="month-selector">
+        <label>Period</label>
+        <select>
+          <option>May 2026</option>
+          <option selected>June 2026 (partial)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Table 1 -->
+    <div class="report-section">
+      <div class="report-section-title">1 · Volume &amp; Completion</div>
+      <div class="panel">
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th style="width:36%">Metric</th>
+              <th style="width:12%; text-align:center">This Month</th>
+              <th style="width:12%; text-align:center">Last Month</th>
+              <th style="width:8%;  text-align:center">Δ</th>
+              <th style="width:16%">Warning ⚠</th>
+              <th style="width:16%">Bad ✗</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="metric-name">Tasks created</td><td class="val-num">38</td><td class="val-num">41</td><td class="delta-neg">−3</td><td>—</td><td>—</td></tr>
+            <tr><td class="metric-name">Tasks completed</td><td class="val-num">29</td><td class="val-num">35</td><td class="delta-neg">−6</td><td>—</td><td>—</td></tr>
+            <tr><td class="metric-name">Tasks archived / deleted</td><td class="val-num">5</td><td class="val-num">3</td><td class="delta-neg">+2</td><td class="thresh-warn">&gt; 20% of created</td><td class="thresh-bad">&gt; 35% of created</td></tr>
+            <tr><td class="metric-name">Archive rate (%)</td><td class="val-num">13%</td><td class="val-num">7%</td><td class="delta-neg">+6%</td><td class="thresh-warn">&gt; 20%</td><td class="thresh-bad">&gt; 35%</td></tr>
+            <tr><td class="metric-name">Net output (completed − created)</td><td class="val-num" style="color:var(--red)">−9</td><td class="val-num" style="color:var(--amber)">−6</td><td class="delta-neg">−3</td><td class="thresh-warn">Negative</td><td class="thresh-bad">Neg 2+ months</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Table 2 -->
+    <div class="report-section">
+      <div class="report-section-title">2 · Cycle Time Summary</div>
+      <div class="panel">
+        <table class="report-table">
+          <thead>
+            <tr><th style="width:36%">Metric</th><th style="width:12%;text-align:center">This Month</th><th style="width:12%;text-align:center">Last Month</th><th style="width:8%;text-align:center">Δ</th><th style="width:16%">Warning ⚠</th><th style="width:16%">Bad ✗</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="metric-name">Avg cycle time (days)</td><td class="val-num">2.8</td><td class="val-num">2.4</td><td class="delta-neg">+0.4</td><td class="thresh-warn">&gt; 3d</td><td class="thresh-bad">&gt; 5d</td></tr>
+            <tr><td class="metric-name">Median cycle time (days)</td><td class="val-num">2.4</td><td class="val-num">2.1</td><td class="delta-neg">+0.3</td><td class="thresh-warn">&gt; 3d</td><td class="thresh-bad">&gt; 4d</td></tr>
+            <tr><td class="metric-name">% completed within 3 days</td><td class="val-num" style="color:var(--green)">72%</td><td class="val-num" style="color:var(--green)">79%</td><td class="delta-neg">−7%</td><td class="thresh-warn">&lt; 70%</td><td class="thresh-bad">&lt; 50%</td></tr>
+            <tr><td class="metric-name">% that exceeded 3 days</td><td class="val-num" style="color:var(--amber)">28%</td><td class="val-num">21%</td><td class="delta-neg">+7%</td><td class="thresh-warn">&gt; 30%</td><td class="thresh-bad">&gt; 50%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Table 3 -->
+    <div class="report-section">
+      <div class="report-section-title">3 · Throughput &amp; Flow</div>
+      <div class="panel">
+        <table class="report-table">
+          <thead>
+            <tr><th style="width:36%">Metric</th><th style="width:12%;text-align:center">This Month</th><th style="width:12%;text-align:center">Last Month</th><th style="width:8%;text-align:center">Δ</th><th style="width:16%">Warning ⚠</th><th style="width:16%">Bad ✗</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="metric-name">Avg weekly throughput</td><td class="val-num">7.3</td><td class="val-num">8.8</td><td class="delta-neg">−1.5</td><td class="thresh-warn">&lt; 3 / week</td><td class="thresh-bad">&lt; 1 / week</td></tr>
+            <tr><td class="metric-name">Avg daily WIP</td><td class="val-num" style="color:var(--amber)">5.2</td><td class="val-num">4.1</td><td class="delta-neg">+1.1</td><td class="thresh-warn">&gt; 5</td><td class="thresh-bad">&gt; 8</td></tr>
+            <tr><td class="metric-name">Pull rate avg (started ÷ created)</td><td class="val-num">0.71</td><td class="val-num">0.68</td><td class="delta-pos">+0.03</td><td class="thresh-warn">&lt; 0.5</td><td class="thresh-bad">&lt; 0.3</td></tr>
+            <tr><td class="metric-name">Peak WIP (single day)</td><td class="val-num" style="color:var(--amber)">8</td><td class="val-num">7</td><td class="delta-neg">+1</td><td class="thresh-warn">&gt; 8</td><td class="thresh-bad">&gt; 12</td></tr>
+            <tr><td class="metric-name">Weeks with throughput drop &gt; 30%</td><td class="val-num">1</td><td class="val-num">0</td><td class="delta-neg">+1</td><td class="thresh-warn">≥ 1 week</td><td class="thresh-bad">≥ 2 weeks</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Table 4 -->
+    <div class="report-section">
+      <div class="report-section-title">4 · Work Composition</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">4a — Created</span></div>
+          <table class="report-table matrix">
+            <thead><tr><th></th><th>High</th><th>Medium</th><th>Low</th><th>Total</th></tr></thead>
+            <tbody>
+              <tr><td class="metric-name">Bugfix</td><td class="mat-val">5</td><td class="mat-val">4</td><td class="mat-val">2</td><td class="mat-val total-row">11</td></tr>
+              <tr><td class="metric-name">Feature</td><td class="mat-val">8</td><td class="mat-val">7</td><td class="mat-val">3</td><td class="mat-val total-row">18</td></tr>
+              <tr><td class="metric-name">Enhancement</td><td class="mat-val">2</td><td class="mat-val">4</td><td class="mat-val">3</td><td class="mat-val total-row">9</td></tr>
+              <tr><td class="total-row" style="font-weight:700">Total</td><td class="total-row">15</td><td class="total-row">15</td><td class="total-row">8</td><td class="total-row" style="color:var(--cyan)">38</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">4b — Completed</span></div>
+          <table class="report-table matrix">
+            <thead><tr><th></th><th>High</th><th>Medium</th><th>Low</th><th>Total</th></tr></thead>
+            <tbody>
+              <tr><td class="metric-name">Bugfix</td><td class="mat-val">4</td><td class="mat-val">4</td><td class="mat-val">4</td><td class="mat-val total-row">12</td></tr>
+              <tr><td class="metric-name">Feature</td><td class="mat-val">5</td><td class="mat-val">4</td><td class="mat-val">2</td><td class="mat-val total-row">11</td></tr>
+              <tr><td class="metric-name">Enhancement</td><td class="mat-val">2</td><td class="mat-val">2</td><td class="mat-val">2</td><td class="mat-val total-row">6</td></tr>
+              <tr><td class="total-row" style="font-weight:700">Total</td><td class="total-row">11</td><td class="total-row">10</td><td class="total-row">8</td><td class="total-row" style="color:var(--cyan)">29</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table 5 -->
+    <div class="report-section">
+      <div class="report-section-title">5 · Work Pattern Review</div>
+      <div class="panel">
+        <table class="report-table">
+          <thead><tr><th style="width:40%">Metric</th><th style="width:15%;text-align:center">Value</th><th style="width:22%">Warning ⚠</th><th style="width:23%">Bad ✗</th></tr></thead>
+          <tbody>
+            <tr><td class="metric-name">Bug vs feature ratio (completed)</td><td class="val-num" style="color:var(--amber)">41%</td><td class="thresh-warn">&gt; 50% bugs</td><td class="thresh-bad">&gt; 70% bugs</td></tr>
+            <tr><td class="metric-name">High-priority completion %</td><td class="val-num" style="color:var(--green)">73%</td><td class="thresh-warn">&lt; 70%</td><td class="thresh-bad">&lt; 50%</td></tr>
+            <tr><td class="metric-name">Cycle time violations (tasks &gt; 3d)</td><td class="val-num" style="color:var(--amber)">28%</td><td class="thresh-warn">&gt; 30% of completed</td><td class="thresh-bad">&gt; 50% of completed</td></tr>
+            <tr><td class="metric-name">Weeks with throughput drop &gt; 30%</td><td class="val-num" style="color:var(--amber)">1</td><td class="thresh-warn">≥ 1 week</td><td class="thresh-bad">≥ 2 weeks</td></tr>
+            <tr><td class="metric-name">Backlog aging violations (&gt; 14d)</td><td class="val-num" style="color:var(--amber)">3</td><td class="thresh-warn">≥ 3 tasks</td><td class="thresh-bad">≥ 5 tasks</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="report-section">
+      <div class="report-section-title">Notable Patterns</div>
+      <div class="notes-area">WIP elevated mid-month due to Stripe integration review — 3 tasks gated on external approval. Bugfix ratio rising but still below warning threshold. Cycle time trend needs monitoring heading into July.</div>
+    </div>
+
+  </div><!-- /reports page -->
+
+</main>
+
+<script>
+// ── Nav ──────────────────────────────────────────────────────────────────────
+function showPage(id, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  el.classList.add('active');
+}
+
+// ── Chart defaults ───────────────────────────────────────────────────────────
+Chart.defaults.color = '#7A91A8';
+Chart.defaults.borderColor = '#1F3A55';
+Chart.defaults.font.family = "'Inter', sans-serif";
+Chart.defaults.font.size = 11;
+
+const CYAN   = '#00D4FF';
+const AMBER  = '#F5A623';
+const RED    = '#FF4B4B';
+const GREEN  = '#2ECC71';
+const DIM    = '#4A6278';
+
+// ── Generate 28 day labels ───────────────────────────────────────────────────
+function last28() {
+  const labels = [];
+  for (let i = 27; i >= 0; i--) {
+    const d = new Date(2026, 5, 15 - i);
+    labels.push(d.toLocaleDateString('en', { month:'short', day:'numeric' }));
+  }
+  return labels;
+}
+
+const days28 = last28();
+
+// ── Throughput + WIP trend ───────────────────────────────────────────────────
+const throughputData = [0.9,0.85,0.7,0.75,0.8,0.65,0.7,0.72,0.68,0.74,0.78,0.82,0.76,0.7,0.65,0.6,0.58,0.62,0.68,0.71,0.73,0.7,0.72,0.74,0.73,0.71,0.74,0.73];
+const wipData        = [3,4,4,5,5,4,3,4,5,5,6,5,4,5,6,7,7,6,6,5,6,6,7,6,6,6,6,6];
+
+new Chart(document.getElementById('chartTrend'), {
+  type: 'line',
+  data: {
+    labels: days28,
+    datasets: [
+      {
+        label: 'Throughput (7d sliding)',
+        data: throughputData,
+        borderColor: CYAN,
+        backgroundColor: 'rgba(0,212,255,0.06)',
+        borderWidth: 2,
+        tension: 0.4,
+        fill: true,
+        yAxisID: 'y',
+        pointRadius: 0, pointHoverRadius: 4,
+      },
+      {
+        label: 'WIP',
+        data: wipData,
+        borderColor: AMBER,
+        backgroundColor: 'rgba(245,166,35,0.0)',
+        borderWidth: 2,
+        tension: 0.3,
+        fill: false,
+        yAxisID: 'y2',
+        borderDash: [4,3],
+        pointRadius: 0, pointHoverRadius: 4,
+      }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { boxWidth: 12, padding: 16 } } },
+    scales: {
+      x: { grid: { color: '#1A2E45' }, ticks: { maxTicksLimit: 8 } },
+      y: {
+        position: 'left', min: 0, max: 1.2,
+        grid: { color: '#1A2E45' },
+        title: { display: true, text: 'Throughput', color: CYAN }
+      },
+      y2: {
+        position: 'right', min: 0, max: 14,
+        grid: { drawOnChartArea: false },
+        title: { display: true, text: 'WIP', color: AMBER }
+      }
+    }
+  }
+});
+
+// ── Cycle time histogram ─────────────────────────────────────────────────────
+new Chart(document.getElementById('chartHist'), {
+  type: 'bar',
+  data: {
+    labels: ['1d','2d','3d','4d','5d','6d+'],
+    datasets: [{
+      label: 'Tasks',
+      data: [6, 10, 5, 4, 2, 2],
+      backgroundColor: [GREEN, GREEN, GREEN, AMBER, AMBER, RED],
+      borderRadius: 4,
+      borderSkipped: false,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { display: false } },
+      y: { grid: { color: '#1A2E45' }, ticks: { stepSize: 2 } }
+    }
+  }
+});
+
+// ── Backlog aging ─────────────────────────────────────────────────────────────
+const agingLabels = days28.filter((_, i) => i % 4 === 0);
+new Chart(document.getElementById('chartAging'), {
+  type: 'line',
+  data: {
+    labels: agingLabels,
+    datasets: [
+      { label: 'Max', data: [8,10,12,14,16,18,21], borderColor: RED,   borderWidth: 2, tension: 0.4, fill: false, pointRadius: 2 },
+      { label: 'Avg', data: [5,6,7,8,9,10,11],     borderColor: AMBER, borderWidth: 2, tension: 0.4, fill: false, pointRadius: 2 },
+      { label: 'Min', data: [1,1,2,2,2,3,3],        borderColor: CYAN,  borderWidth: 2, tension: 0.4, fill: false, pointRadius: 2 },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { boxWidth: 8, padding: 10, font: { size: 10 } } } },
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+      y: { grid: { color: '#1A2E45' }, title: { display: true, text: 'days', font: { size: 10 } } }
+    }
+  }
+});
+
+// ── CFD ──────────────────────────────────────────────────────────────────────
+const cfdDone     = [80,83,85,88,91,93,95,97,100,103,106,108,110,113,116,118,120,122,124,126,128,130,132,134,136,137,138,140];
+const cfdInProg   = [4,4,5,5,6,5,5,6,6,6,6,7,7,6,6,6,7,7,6,6,6,6,6,6,6,6,6,6];
+const cfdBacklog  = [35,33,32,30,28,27,26,24,22,20,18,17,16,14,13,12,11,10,9,9,8,8,8,7,7,7,6,6];
+
+new Chart(document.getElementById('chartCFD'), {
+  type: 'line',
+  data: {
+    labels: days28,
+    datasets: [
+      { label: 'Done',     data: cfdDone,    backgroundColor: 'rgba(46,204,113,0.25)', borderColor: GREEN, borderWidth: 1.5, fill: 'origin', tension: 0.3, pointRadius: 0 },
+      { label: 'In Progress', data: cfdInProg, backgroundColor: 'rgba(0,212,255,0.2)', borderColor: CYAN,  borderWidth: 1.5, fill: '-1', tension: 0.3, pointRadius: 0 },
+      { label: 'Backlog',  data: cfdBacklog,  backgroundColor: 'rgba(74,98,120,0.3)',  borderColor: DIM,   borderWidth: 1.5, fill: '-1', tension: 0.3, pointRadius: 0 },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { boxWidth: 12, padding: 16 } } },
+    scales: {
+      x: { grid: { color: '#1A2E45' }, ticks: { maxTicksLimit: 8 } },
+      y: { grid: { color: '#1A2E45' }, stacked: false }
+    }
+  }
+});
+
+// ── Created vs Completed bar ──────────────────────────────────────────────────
+new Chart(document.getElementById('chartCreated'), {
+  type: 'bar',
+  data: {
+    labels: ['May W3','May W4','Jun W1','Jun W2'],
+    datasets: [
+      { label: 'Created',   data: [11, 10, 9, 8], backgroundColor: 'rgba(74,98,120,0.6)',   borderRadius: 3 },
+      { label: 'Completed', data: [9,  11, 6, 3],  backgroundColor: 'rgba(0,212,255,0.5)', borderRadius: 3 },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { boxWidth: 10, padding: 12 } } },
+    scales: {
+      x: { grid: { display: false } },
+      y: { grid: { color: '#1A2E45' }, ticks: { stepSize: 3 } }
+    }
+  }
+});
+
+// ── Cycle time trend ─────────────────────────────────────────────────────────
+const ctTrend = [2.1, 2.0, 2.2, 2.3, 2.1, 2.0, 2.4, 2.5, 2.3, 2.4, 2.6, 2.5, 2.4, 2.3, 2.5, 2.7, 2.8, 2.7, 2.6, 2.5, 2.4, 2.5, 2.6, 2.7, 2.5, 2.4, 2.4, 2.4];
+new Chart(document.getElementById('chartCycle'), {
+  type: 'line',
+  data: {
+    labels: days28,
+    datasets: [{
+      label: 'Avg cycle time (7d)',
+      data: ctTrend,
+      borderColor: CYAN,
+      backgroundColor: 'rgba(0,212,255,0.06)',
+      borderWidth: 2,
+      tension: 0.4,
+      fill: true,
+      pointRadius: 0, pointHoverRadius: 4,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      annotation: {}
+    },
+    scales: {
+      x: { grid: { color: '#1A2E45' }, ticks: { maxTicksLimit: 8 } },
+      y: {
+        min: 0, max: 5,
+        grid: { color: '#1A2E45' },
+        title: { display: true, text: 'days' },
+        ticks: { callback: v => v + 'd' }
+      }
+    }
+  }
+});
+
+// ── Pie charts ───────────────────────────────────────────────────────────────
+const pieOpts = {
+  responsive: true, maintainAspectRatio: false,
+  plugins: {
+    legend: { display: false },
+    tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed}%` } }
+  },
+  cutout: '65%',
+};
+
+new Chart(document.getElementById('pieType'), {
+  type: 'doughnut',
+  data: { labels: ['Bugfix','Feature','Enhancement'], datasets: [{ data: [33,50,17], backgroundColor: [RED, CYAN, GREEN], borderWidth: 0, hoverOffset: 4 }] },
+  options: pieOpts
+});
+
+new Chart(document.getElementById('piePriority'), {
+  type: 'doughnut',
+  data: { labels: ['High','Medium','Low'], datasets: [{ data: [50,33,17], backgroundColor: [RED, AMBER, DIM], borderWidth: 0, hoverOffset: 4 }] },
+  options: pieOpts
+});
+
+new Chart(document.getElementById('pieCompleted'), {
+  type: 'doughnut',
+  data: { labels: ['Bugfix','Feature','Enhancement'], datasets: [{ data: [41,38,21], backgroundColor: [RED, CYAN, GREEN], borderWidth: 0, hoverOffset: 4 }] },
+  options: pieOpts
+});
+</script>
+</body>
+</html>

@@ -404,6 +404,10 @@ def _make_card_tile(
         data=(card_data["id"], card_data.get("lane")),
     )
 
+    # Tag the outermost control with the card number (string key) so the
+    # fast filter path can toggle visibility without rebuilding the tile.
+    draggable.key = str(number) if number is not None else ""
+
     # Archived cards are not reorderable; plain draggable.
     if is_archived or on_reorder is None or page is None:
         return draggable
@@ -440,13 +444,16 @@ def _make_card_tile(
             return
         on_reorder(dragged_id, from_col, target_col, before_id)
 
-    return ft.DragTarget(
+    drag_target = ft.DragTarget(
         group="cards",
         content=wrapper,
         on_will_accept=_on_will_accept,
         on_leave=_on_leave,
         on_accept=_on_accept,
     )
+    # Mirror the card number on the outer DragTarget for filter visibility.
+    drag_target.key = str(number) if number is not None else ""
+    return drag_target
 
 
 def build_board(
@@ -602,6 +609,40 @@ def build_board(
     return board_row, lane_listviews
 
 
+def apply_filter(
+    page: ft.Page,
+    lane_listviews: dict[str, ft.ListView],
+    visible_numbers: set[int] | None,
+) -> None:
+    """Apply a filter by toggling tile visibility — no tile rebuild.
+
+    Much faster than refresh_lane: Flet only needs to push ``visible``
+    property changes (~1 update per card) instead of replacing the entire
+    control tree (dozens of nested objects per card).
+
+    ``visible_numbers=None`` means no filter active → show every tile.
+    """
+    for lv in lane_listviews.values():
+        visible_count = 0
+        for ctrl in lv.controls:
+            # Card number is stored in ctrl.key at tile-creation time.
+            try:
+                num = int(ctrl.key) if ctrl.key else None
+            except (ValueError, TypeError):
+                num = None
+            should_show = visible_numbers is None or (
+                num is not None and num in visible_numbers
+            )
+            ctrl.visible = should_show
+            if should_show:
+                visible_count += 1
+        # Refresh the lane's count badge (stashed on lv.data).
+        count_text = getattr(lv, "data", None)
+        if isinstance(count_text, ft.Text):
+            count_text.value = str(visible_count)
+    page.update()
+
+
 def refresh_lane(
     page: ft.Page,
     lane_listviews: dict[str, ft.ListView],
@@ -613,6 +654,10 @@ def refresh_lane(
     priority_filter: str | None = None,
     deadline_filter: str | None = None,
     update: bool = True,
+    # Pre-computed filter sets: when provided, skip the redundant all-lane DB
+    # queries so batch refresh_board() callers only pay the cost once.
+    _visible_numbers: set[int] | None | bool = False,  # False = "not provided"
+    _hidden_block_numbers: frozenset[int] | None = None,
 ) -> None:
     lv = lane_listviews.get(lane_key)
     if not lv:
@@ -622,8 +667,16 @@ def refresh_lane(
         operations.list_cards(lane=lane_key, archived=True, epic=epic)
         if show_archived else []
     )
-    visible_numbers = _compute_visible_numbers(epic, priority_filter, show_archived, deadline_filter)
-    hidden_block_numbers = _archived_card_numbers(show_archived)
+    # Use pre-computed values when supplied by the caller (batch refresh path),
+    # otherwise compute them here for the single-lane refresh path.
+    if _visible_numbers is False:
+        visible_numbers = _compute_visible_numbers(epic, priority_filter, show_archived, deadline_filter)
+    else:
+        visible_numbers = _visible_numbers  # type: ignore[assignment]
+    if _hidden_block_numbers is None and _visible_numbers is False:
+        hidden_block_numbers = _archived_card_numbers(show_archived)
+    else:
+        hidden_block_numbers = _hidden_block_numbers or frozenset()
     if visible_numbers is not None:
         active = [c for c in active if c.get("number") in visible_numbers]
         archived_cards = [c for c in archived_cards if c.get("number") in visible_numbers]

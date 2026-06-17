@@ -10,10 +10,12 @@ load_dotenv(ENV_FILE)
 
 
 def run_app() -> None:
+    import json
     import flet as ft
     import traceback as _tb
 
     from paths import ASSETS_DIR
+    import paths
     from board.storage.sync import full_sync
     from vault.vault import init_vault
     from ui.card_dialog import open_create_dialog, open_edit_dialog
@@ -22,17 +24,23 @@ def run_app() -> None:
     from ui.kanban_page import KanbanPage
     from ui.table_page import TablePage
     from ui.analytics_page import AnalyticsPage
+    from ui.health_page import HealthPage
     from ui.graph_page import GraphPage
     from ui.settings_dialog import open_settings_dialog
 
-    def app(page: ft.Page) -> None:
+    async def app(page: ft.Page) -> None:
         try:
             page.title = "Kanbai"
             page.theme_mode = ft.ThemeMode.DARK
             page.bgcolor = "#1E1E1E"
             page.padding = 0
-            page.window.width = 1380
-            page.window.height = 820
+            page.window.width = 1500
+            page.window.height = 1200
+            page.update()          # commit dimensions before centering
+            try:
+                await page.window.center()
+            except Exception:
+                pass
             page.window.min_width = 900
             page.window.min_height = 600
 
@@ -55,16 +63,16 @@ def run_app() -> None:
                         on_open_card(card_nav_stack[-1])
 
                 def on_updated(cid, col):
-                    kanban.refresh_board()
-                    table_pg.refresh()
+                    import threading
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
                     analytics_pg.refresh()
                 def on_moved(cid, old_col, new_col):
-                    kanban.refresh_board()
-                    table_pg.refresh()
+                    import threading
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
                     analytics_pg.refresh()
                 def on_archived(cid, col):
-                    kanban.refresh_board()
-                    table_pg.refresh()
+                    import threading
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
                     analytics_pg.refresh()
                     _go_back()
 
@@ -83,8 +91,23 @@ def run_app() -> None:
             # Board/Graph and "All" on Analytics; a concrete name syncs verbatim.
             _shared_epic: dict[str, str | None] = {"value": None}
 
+            def _load_ui_state() -> dict:
+                try:
+                    return json.loads(paths.UI_STATE_PATH.read_text())
+                except Exception:
+                    return {}
+
+            def _save_ui_state(state: dict) -> None:
+                try:
+                    paths.UI_STATE_PATH.write_text(json.dumps(state))
+                except Exception:
+                    pass
+
             def _on_epic_changed(epic) -> None:
                 _shared_epic["value"] = epic
+                state = _load_ui_state()
+                state["last_epic"] = epic
+                _save_ui_state(state)
 
             # Single source of truth for the sidebar navigation order. Add,
             # remove, or reorder entries here and every index-dependent piece
@@ -92,6 +115,7 @@ def run_app() -> None:
             NAV_ITEMS = [
                 ("board", ft.Icons.VIEW_KANBAN_OUTLINED, ft.Icons.VIEW_KANBAN, "Board"),
                 ("analytics", ft.Icons.BAR_CHART_OUTLINED, ft.Icons.BAR_CHART, "Analytics"),
+                ("health", ft.Icons.MONITOR_HEART_OUTLINED, ft.Icons.MONITOR_HEART, "Health"),
                 ("graph", ft.Icons.ACCOUNT_TREE_OUTLINED, ft.Icons.ACCOUNT_TREE, "Graph"),
                 ("table", ft.Icons.TABLE_ROWS_OUTLINED, ft.Icons.TABLE_ROWS, "Table"),
             ]
@@ -101,6 +125,15 @@ def run_app() -> None:
             # Two instances — one for unselected state, one for selected state.
             _health_dot_unsel = ft.Container(width=9, height=9, border_radius=5, visible=False, right=0, top=2)
             _health_dot_sel   = ft.Container(width=9, height=9, border_radius=5, visible=False, right=0, top=2)
+
+            # Same dots for the Health nav icon.
+            _health_dot_health_unsel = ft.Container(width=9, height=9, border_radius=5, visible=False, right=0, top=2)
+            _health_dot_health_sel   = ft.Container(width=9, height=9, border_radius=5, visible=False, right=0, top=2)
+
+            _all_nav_dots = (
+                _health_dot_unsel, _health_dot_sel,
+                _health_dot_health_unsel, _health_dot_health_sel,
+            )
 
             def _health_icon_stack(base_icon: str, dot: ft.Container) -> ft.Stack:
                 return ft.Stack(
@@ -129,7 +162,7 @@ def run_app() -> None:
                         for s in non_good
                     ]
                     tip = "\n".join(tip_lines)
-                for dot in (_health_dot_unsel, _health_dot_sel):
+                for dot in _all_nav_dots:
                     dot.bgcolor = color
                     dot.visible = visible
                     dot.tooltip = ft.Tooltip(message=tip, prefer_below=True, wait_duration=300) if visible else None
@@ -177,6 +210,11 @@ def run_app() -> None:
             )
             table_pg = TablePage(page, on_open_card)
             analytics_pg = AnalyticsPage(page, on_open_card, on_epic_change=_on_epic_changed)
+            health_pg = HealthPage(
+                page,
+                on_open_card=on_open_card,
+                on_epic_change=_on_epic_changed,
+            )
             graph_pg = GraphPage(
                 page,
                 on_open_card,
@@ -187,6 +225,7 @@ def run_app() -> None:
             kanban_view = kanban.build()
             table_view = table_pg.build()
             analytics_view = analytics_pg.build()
+            health_view = health_pg.build()
             graph_view = graph_pg.build()
 
             # Map nav keys to their view + epic-selection handler so navigation
@@ -194,15 +233,24 @@ def run_app() -> None:
             view_by_key = {
                 "board": kanban_view,
                 "analytics": analytics_view,
+                "health": health_view,
                 "graph": graph_view,
                 "table": table_view,
             }
             select_by_key = {
                 "board": kanban.select_epic,
                 "analytics": analytics_pg.select_epic,
+                "health": health_pg.select_epic,
                 "graph": graph_pg.select_epic,
                 "table": table_pg.select_epic,
             }
+
+            # Restore the last-used epic (persisted across restarts).
+            _saved_epic = _load_ui_state().get("last_epic")
+            if _saved_epic:
+                _shared_epic["value"] = _saved_epic
+                for _sel_fn in select_by_key.values():
+                    _sel_fn(_saved_epic)
 
             # Keep ALL views mounted and just toggle visibility on navigation.
             # Swapping a single container's .content forces Flet to tear down
@@ -288,8 +336,12 @@ def run_app() -> None:
                 bgcolor="#252526",
                 destinations=[
                     ft.NavigationRailDestination(
-                        icon=_health_icon_stack(ft.Icons.BAR_CHART_OUTLINED, _health_dot_unsel) if key == "analytics" else icon,
-                        selected_icon=_health_icon_stack(ft.Icons.BAR_CHART, _health_dot_sel) if key == "analytics" else selected_icon,
+                        icon=_health_icon_stack(ft.Icons.BAR_CHART_OUTLINED, _health_dot_unsel) if key == "analytics"
+                            else _health_icon_stack(ft.Icons.MONITOR_HEART_OUTLINED, _health_dot_health_unsel) if key == "health"
+                            else icon,
+                        selected_icon=_health_icon_stack(ft.Icons.BAR_CHART, _health_dot_sel) if key == "analytics"
+                            else _health_icon_stack(ft.Icons.MONITOR_HEART, _health_dot_health_sel) if key == "health"
+                            else selected_icon,
                         label=label,
                     )
                     for key, icon, selected_icon, label in NAV_ITEMS
@@ -364,6 +416,7 @@ def run_app() -> None:
                         ft.VerticalDivider(width=1, color="#3E3E42"),
                         kanban_view,
                         analytics_view,
+                        health_view,
                         graph_view,
                         table_view,
                     ],

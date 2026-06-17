@@ -7,6 +7,7 @@ import io
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend — must be before pyplot import
 import matplotlib.dates as mdates
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import logging
@@ -222,11 +223,14 @@ class AnalyticsPage:
         by_lane = sqlite_cache.count_cards_by_lane(epic=epic)
         by_priority = sqlite_cache.count_cards_by_priority(epic=epic)
         archived = sqlite_cache.count_archived(epic=epic)
+        archived_28d = sqlite_cache.count_archived_within(28, epic=epic)
         recent_created = sqlite_cache.recently_created_cards(10, epic=epic)
         recent_updated = sqlite_cache.recently_updated_cards(5, epic=epic)
         recent_completed = sqlite_cache.recently_completed_cards(5, epic=epic)
         updated_7d = sqlite_cache.count_updated_within(_RECENT_WINDOW_DAYS, epic=epic)
         completed_7d = sqlite_cache.count_completed_within(_RECENT_WINDOW_DAYS, epic=epic)
+        completed_28d = sqlite_cache.count_completed_within(28, epic=epic)
+        started_28d = sqlite_cache.count_started_within(28, epic=epic)
         blockers = sqlite_cache.blocker_cards(5, epic=epic)
         blocker_count = sqlite_cache.count_blocker_cards(epic=epic)
         deadlines = sqlite_cache.due_soon_cards(5, epic=epic)
@@ -237,21 +241,24 @@ class AnalyticsPage:
         # Defer expensive queries: don't fetch CFD and age_series yet
         # They'll be fetched on background threads during lazy rendering
 
-        flow_counts = self._flow_counts(28, epic=epic)
-        flow_counts_all = self._flow_counts_all(epic=epic)
+        flow_counts_7 = self._flow_counts(7, epic=epic)
+        flow_counts_28 = self._flow_counts(28, epic=epic)
         flow_weekly = sqlite_cache.transition_flow_weekly(12, epic=epic)
         age_stats = sqlite_cache.open_card_age_stats(epic=epic)
         days_since_move = sqlite_cache.days_since_last_transition(epic=epic)
+        days_since_started = sqlite_cache.days_since_last_started(epic=epic)
+        cycle_time_7 = sqlite_cache.avg_cycle_time_days(7, epic=epic)
+        cycle_time_28 = sqlite_cache.avg_cycle_time_days(28, epic=epic)
 
         total = sum(by_lane.values())
         done = by_lane.get("done", 0)
         in_progress = by_lane.get("in_progress", 0)
         open_count = total - done
 
-        pull_rate_28 = self._ratio(flow_counts["started"], flow_counts["created"])
-        pull_rate_all = self._ratio(flow_counts_all["started"], flow_counts_all["created"])
-        throughput_28 = self._ratio(flow_counts["completed"], flow_counts["started"])
-        throughput_all = self._ratio(flow_counts_all["completed"], flow_counts_all["started"])
+        pull_rate_7 = self._ratio(flow_counts_7["started"], flow_counts_7["created"])
+        pull_rate_28 = self._ratio(flow_counts_28["started"], flow_counts_28["created"])
+        throughput_7 = self._ratio(flow_counts_7["completed"], flow_counts_7["started"])
+        throughput_28 = self._ratio(flow_counts_28["completed"], flow_counts_28["started"])
 
         max_age = age_stats["max_age"]
         max_age_band = settings.band(max_age, settings.HEALTH_MAX_AGE_WATCH_DAYS, settings.HEALTH_MAX_AGE_BAD_DAYS)
@@ -262,6 +269,27 @@ class AnalyticsPage:
             settings.HEALTH_LAST_MOVE_BAD_DAYS,
         )
         move_color = settings.band_color(move_band)
+        started_band = settings.band(
+            days_since_started,
+            settings.HEALTH_LAST_STARTED_WATCH_DAYS,
+            settings.HEALTH_LAST_STARTED_BAD_DAYS,
+        )
+        started_color = settings.band_color(started_band)
+        pull_rate_band = settings.band_inverted(
+            pull_rate_7,
+            settings.HEALTH_PULL_RATE_WATCH,
+            settings.HEALTH_PULL_RATE_BAD,
+        )
+        throughput_band = settings.band_inverted(
+            throughput_7,
+            settings.HEALTH_THROUGHPUT_WATCH,
+            settings.HEALTH_THROUGHPUT_BAD,
+        )
+        cycle_time_band = settings.band(
+            cycle_time_7,
+            settings.HEALTH_CYCLE_TIME_WATCH_DAYS,
+            settings.HEALTH_CYCLE_TIME_BAD_DAYS,
+        )
         blockers_band = settings.band(blocker_count, settings.HEALTH_BLOCKER_WATCH, settings.HEALTH_BLOCKER_BAD)
         due_soon_band = settings.band(due_soon, settings.HEALTH_DUE_SOON_WATCH, settings.HEALTH_DUE_SOON_BAD)
 
@@ -270,14 +298,42 @@ class AnalyticsPage:
                 # ── Row 1: Stat cards ─────────────────────────────────────────
                 ft.Row(
                     [
-                        self._stat_card(ft.Icons.DASHBOARD_OUTLINED, str(total), "Total Tasks", "#58A6FF"),
-                        self._stat_card(ft.Icons.AUTORENEW, str(in_progress), "In Progress", "#39C5CF"),
-                        self._stat_card(ft.Icons.CHECK_CIRCLE_OUTLINE, str(done), "Completed", "#56D364"),
+                        self._stat_card(
+                            ft.Icons.CHECK_CIRCLE_OUTLINE,
+                            str(completed_7d),
+                            "Completed 7d",
+                            "#56D364",
+                            sublabel="tasks done",
+                        ),
+                        self._stat_card(
+                            ft.Icons.CHECK_CIRCLE_OUTLINE,
+                            str(completed_28d),
+                            "Completed 28d",
+                            "#56D364",
+                            sublabel="tasks done",
+                        ),
+                        self._stat_card(
+                            ft.Icons.AUTORENEW,
+                            str(in_progress),
+                            "WIP now",
+                            "#39C5CF",
+                            sublabel="in progress",
+                        ),
+                        self._stat_card(
+                            ft.Icons.TASK_ALT,
+                            self._fmt_ratio(throughput_7),
+                            "Throughput 7d",
+                            "#39C5CF",
+                            sublabel="completed \u00f7 started",
+                            band=throughput_band,
+                            tooltip="completed \u00f7 started over the last 7 days. ~1.0 means WIP is stable; <1.0 means in-progress work is piling up.",
+                        ),
                         self._stat_card(
                             ft.Icons.BLOCK,
                             str(blocker_count),
                             "Blockers",
                             "#F85149" if blocker_count else "#8B949E",
+                            sublabel="blocking tasks",
                             band=blockers_band,
                         ),
                         self._stat_card(
@@ -285,9 +341,9 @@ class AnalyticsPage:
                             str(due_soon),
                             f"Due \u2264 {settings.DEADLINE_SOON_DAYS}d",
                             "#F0A742" if due_soon else "#8B949E",
+                            sublabel="upcoming deadlines",
                             band=due_soon_band,
                         ),
-                        # self._stat_card(ft.Icons.ARCHIVE_OUTLINED, str(archived), "Archived", "#F5A96B"),
                     ],
                     spacing=12,
                 ),
@@ -297,37 +353,46 @@ class AnalyticsPage:
                     [
                         self._stat_card(
                             ft.Icons.LOGIN,
-                            self._fmt_ratio(pull_rate_28),
-                            "Pull rate (28d)",
+                            self._fmt_ratio(pull_rate_7),
+                            "Pull rate (7d)",
                             "#58A6FF",
-                            sublabel=f"all-time {self._fmt_ratio(pull_rate_all)}",
+                            sublabel=f"Last 28d: {self._fmt_ratio(pull_rate_28)}",
+                            band=pull_rate_band,
+                            tooltip="started ÷ created over the last 7 days. \u22651.0 means the backlog is draining faster than it grows.",
                         ),
                         self._stat_card(
                             ft.Icons.TASK_ALT,
-                            self._fmt_ratio(throughput_28),
-                            "Throughput (28d)",
+                            self._fmt_ratio(throughput_7),
+                            "Throughput (7d)",
                             "#39C5CF",
-                            sublabel=f"all-time {self._fmt_ratio(throughput_all)}",
+                            sublabel=f"Last 28d: {self._fmt_ratio(throughput_28)}",
+                            band=throughput_band,
+                            tooltip="completed ÷ started over the last 7 days. ~1.0 means WIP is stable; <1.0 means in-progress work is piling up.",
                         ),
                         self._stat_card(
-                            ft.Icons.HOURGLASS_BOTTOM,
-                            f"{max_age:.0f}d" if max_age is not None else "\u2014",
-                            "Oldest card age",
-                            max_age_color,
-                            sublabel=(
-                                f"avg {age_stats['avg_age']:.0f}d \u00b7 newest "
-                                f"{age_stats['min_age']:.0f}d"
-                                if age_stats["avg_age"] is not None
-                                else "no open cards"
-                            ),
-                            band=max_age_band,
+                            ft.Icons.TIMELAPSE,
+                            f"{cycle_time_7:.1f}d" if cycle_time_7 is not None else "\u2014",
+                            "Avg cycle time (7d)",
+                            "#A371F7",
+                            sublabel=f"Last 28d: {f'{cycle_time_28:.1f}d' if cycle_time_28 is not None else chr(0x2014)}",
+                            band=cycle_time_band,
+                            tooltip="Average days from 'in progress' to 'done' for cards completed in the last 7 days. Target: 1\u20133d (watch > 3d, bad > 5d).",
                         ),
                         self._stat_card(
                             ft.Icons.UPDATE,
                             f"{days_since_move}d" if days_since_move is not None else "\u2014",
-                            "Days since last transition",
+                            "Last activity",
                             move_color,
+                            sublabel="days since last move",
                             band=move_band,
+                        ),
+                        self._stat_card(
+                            ft.Icons.PLAY_ARROW,
+                            f"{days_since_started}d" if days_since_started is not None else "\u2014",
+                            "Last started",
+                            started_color,
+                            sublabel="days since last started",
+                            band=started_band,
                         ),
                     ],
                     spacing=12,
@@ -350,7 +415,7 @@ class AnalyticsPage:
                     [
                         self._section_card(
                             "Flow Ratios (last 28 days)",
-                            self._flow_ratios_section(flow_counts),
+                            self._flow_ratios_section(flow_counts_28),
                             expand=True,
                         ),
                     ],
@@ -361,12 +426,12 @@ class AnalyticsPage:
                 ft.Row(
                     [
                         self._section_card(
-                            "Start Ratio by Week (started \u00f7 created)",
+                            "Pull Rate by Week (started \u00f7 created)",
                             self._create_lazy_placeholder("flow_ratio_start"),
                             expand=True,
                         ),
                         self._section_card(
-                            "Finish Ratio by Week (completed \u00f7 started)",
+                            "Throughput by Week (completed \u00f7 started)",
                             self._create_lazy_placeholder("flow_ratio_finish"),
                             expand=True,
                         ),
@@ -521,15 +586,15 @@ class AnalyticsPage:
         self._lazy_chart_targets[chart_id] = container
         return container
     
-    def _schedule_lazy_charts(self, epic: str | None, flow_weekly: dict, top_tags: dict) -> None:
+    def _schedule_lazy_charts(self, epic: str | None, flow_weekly: list[dict], top_tags: list[tuple[str, int]]) -> None:
         """Schedule lazy rendering of expensive charts."""
         self._render_chart_async(
             self._lazy_chart_targets.get("flow_ratio_start"),
-            lambda: self._flow_ratio_weekly_chart(flow_weekly, "started", "created", "Start ratio", "#58A6FF"),
+            lambda: self._flow_ratio_weekly_chart(flow_weekly, "started", "created", "Pull rate", "#58A6FF"),
         )
         self._render_chart_async(
             self._lazy_chart_targets.get("flow_ratio_finish"),
-            lambda: self._flow_ratio_weekly_chart(flow_weekly, "completed", "started", "Finish ratio", "#39C5CF"),
+            lambda: self._flow_ratio_weekly_chart(flow_weekly, "completed", "started", "Throughput", "#39C5CF"),
         )
         self._render_chart_async(
             self._lazy_chart_targets.get("tag_pie"),
@@ -546,13 +611,24 @@ class AnalyticsPage:
 
     # ── Stat card ─────────────────────────────────────────────────────────────
 
-    def _stat_card(self, icon: str, value: str, label: str, color: str, sublabel: str | None = None, band: str | None = None) -> ft.Container:
-        labels: list[ft.Control] = [
-            ft.Text(value, size=20, weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY),
-            ft.Text(label, size=11, color=_TEXT_SECONDARY),
+    def _stat_card(self, icon: str | ft.IconData, value: str, label: str, color: str, sublabel: str | None = None, band: str | None = None, tooltip: str | None = None) -> ft.Container:
+        _BAND_VALUE = {"good": "#56D364", "watch": "#F0A742", "bad": "#F85149"}
+        value_color = _BAND_VALUE.get(band or "", _TEXT_PRIMARY)
+        label_row: ft.Control = ft.Row(
+            [
+                ft.Icon(icon, size=12, color=_TEXT_SECONDARY),  # type: ignore[arg-type]
+                ft.Text(label.upper(), size=10, weight=ft.FontWeight.W_600, color=_TEXT_SECONDARY),
+            ],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            tight=True,
+        )
+        items: list[ft.Control] = [
+            label_row,
+            ft.Text(value, size=28, weight=ft.FontWeight.BOLD, color=value_color, font_family="monospace"),
         ]
         if sublabel is not None:
-            labels.append(ft.Text(sublabel, size=10, color=_TEXT_SECONDARY, italic=True))
+            items.append(ft.Text(sublabel, size=11, color=_TEXT_SECONDARY))
         _BAND_BORDER = {"watch": "#F0A742", "bad": "#F85149"}
         border_color = _BAND_BORDER.get(band or "", _BORDER)
         bg = (
@@ -561,30 +637,18 @@ class AnalyticsPage:
             else _BG_CARD
         )
         return ft.Container(
-            content=ft.Row(
-                [
-                    ft.Container(
-                        content=ft.Icon(icon, color=color, size=22),
-                        width=36,
-                        height=36,
-                        bgcolor=ft.Colors.with_opacity(0.13, color),
-                        border_radius=8,
-                        alignment=ft.Alignment(0, 0),
-                    ),
-                    ft.Column(
-                        labels,
-                        spacing=0,
-                        tight=True,
-                    ),
-                ],
-                spacing=10,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            content=ft.Column(
+                items,
+                spacing=4,
+                tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.START,
             ),
             expand=True,
             bgcolor=bg,
             border=ft.Border(ft.BorderSide(1, border_color), ft.BorderSide(1, border_color), ft.BorderSide(1, border_color), ft.BorderSide(1, border_color)),
-            border_radius=10,
-            padding=ft.Padding(14, 12, 14, 12),
+            border_radius=8,
+            padding=ft.Padding(14, 14, 14, 14),
+            tooltip=ft.Tooltip(message=tooltip, prefer_below=True, wait_duration=300) if tooltip else None,
         )
 
     # ── Section card wrapper ──────────────────────────────────────────────────
@@ -657,13 +721,6 @@ class AnalyticsPage:
             since.isoformat(), now.isoformat(), epic=epic
         )
 
-    def _flow_counts_all(self, epic: str | None = None) -> dict[str, int]:
-        """All-time flow-event counts (no lower time bound)."""
-        now = dt.datetime.now(dt.timezone.utc)
-        return sqlite_cache.transition_flow_counts(
-            "0001-01-01T00:00:00+00:00", now.isoformat(), epic=epic
-        )
-
     @staticmethod
     def _ratio(numer: int, denom: int) -> float | None:
         """Safe ratio: None when the denominator is zero (avoids div-by-zero/∞)."""
@@ -721,10 +778,10 @@ class AnalyticsPage:
         completed = counts.get("completed", 0)
         return ft.Column(
             [
-                # Start ratio: are we pulling work out of the backlog as fast as
+                # Pull rate: are we pulling work out of the backlog as fast as
                 # it arrives? >= 1.0 means the backlog is draining.
                 self._flow_ratio_row(
-                    "Start ratio (started \u00f7 created)",
+                    "Pull rate (started \u00f7 created)",
                     started,
                     created,
                     "started",
@@ -732,10 +789,10 @@ class AnalyticsPage:
                     healthy_at_one=False,
                 ),
                 ft.Divider(height=1, color=_BORDER),
-                # Finish ratio: are we finishing what we start? ~1.0 means WIP is
+                # Throughput: are we finishing what we start? ~1.0 means WIP is
                 # stable; < 1.0 means in-progress/review is piling up.
                 self._flow_ratio_row(
-                    "Finish ratio (completed \u00f7 started)",
+                    "Throughput (completed \u00f7 started)",
                     completed,
                     started,
                     "completed",
@@ -821,14 +878,14 @@ class AnalyticsPage:
             counterclock=False,
         )
         # Donut hole
-        ax.add_patch(plt.Circle((0, 0), 0.55, color=_BG_CARD, zorder=10))
+        ax.add_patch(mpatches.Circle((0, 0), 0.55, color=_BG_CARD, zorder=10))
 
         plt.tight_layout(pad=0)
         buf = io.BytesIO()
         plt.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor=_BG_CARD)
         plt.close(fig)
         buf.seek(0)
-        pie_b64 = base64.b64encode(buf.read()).decode()
+        pie_b64 = buf.read()
 
         # Legend with counts
         legend_items = []
@@ -935,7 +992,7 @@ class AnalyticsPage:
                     border_radius=6,
                     padding=ft.Padding(10, 8, 10, 8),
                     height=58,
-                    on_click=(lambda e, cid=card_id: self._on_open_card(cid)) if self._on_open_card else None,
+                    on_click=(lambda e, cid=card_id: self._on_open_card(cid)) if self._on_open_card else None,  # type: ignore[misc]
                     ink=bool(self._on_open_card),
                 )
             )
@@ -1018,7 +1075,7 @@ class AnalyticsPage:
                     border_radius=6,
                     padding=ft.Padding(10, 8, 10, 8),
                     height=58,
-                    on_click=(lambda e, cid=card_id: self._on_open_card(cid)) if self._on_open_card else None,
+                    on_click=(lambda e, cid=card_id: self._on_open_card(cid)) if self._on_open_card else None,  # type: ignore[misc]
                     ink=bool(self._on_open_card),
                 )
             )
@@ -1118,7 +1175,7 @@ class AnalyticsPage:
                     border_radius=6,
                     padding=ft.Padding(10, 8, 10, 8),
                     height=58,
-                    on_click=(lambda e, cid=card_id: self._on_open_card(cid)) if self._on_open_card else None,
+                    on_click=(lambda e, cid=card_id: self._on_open_card(cid)) if self._on_open_card else None,  # type: ignore[misc]
                     ink=bool(self._on_open_card),
                 )
             )
@@ -1335,10 +1392,10 @@ class AnalyticsPage:
         from datetime import datetime
         dates = [datetime.strptime(d["date"], "%Y-%m-%d") for d in cfd]
 
-        with plt.xkcd():
+        with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(10, 3.8))
             ax.stackplot(
-                dates,
+                dates,  # type: ignore[arg-type]
                 [d["backlog"]     for d in cfd],
                 [d["in_progress"] for d in cfd],
                 [d["review"]      for d in cfd],
@@ -1364,7 +1421,7 @@ class AnalyticsPage:
             plt.close(fig)
             buf.seek(0)
 
-        b64 = base64.b64encode(buf.read()).decode()
+        b64 = buf.read()
         return ft.Row(
             [ft.Image(src=b64, border_radius=8)],
             alignment=ft.MainAxisAlignment.CENTER,
@@ -1404,9 +1461,9 @@ class AnalyticsPage:
         ]
         finite = [v for v in values if not math.isnan(v)]
 
-        with plt.xkcd():
+        with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(5, 3.4))
-            ax.plot(dates, values, color=color, linewidth=2, marker="o", markersize=4, label=label)
+            ax.plot(dates, values, color=color, linewidth=2, marker="o", markersize=4, label=label)  # type: ignore[arg-type]
             # Reference line at 1.0 — the "balanced flow" mark.
             ax.axhline(y=1.0, color="#8B949E", linestyle="--", linewidth=1, alpha=0.7)
 
@@ -1426,7 +1483,7 @@ class AnalyticsPage:
             plt.close(fig)
             buf.seek(0)
 
-        b64 = base64.b64encode(buf.read()).decode()
+        b64 = buf.read()
         return ft.Row(
             [ft.Image(src=b64, border_radius=8)],
             alignment=ft.MainAxisAlignment.CENTER,
@@ -1446,11 +1503,11 @@ class AnalyticsPage:
         avg_color = "#58A6FF"
         max_color = "#F0A742"
 
-        with plt.xkcd():
+        with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(10, 3.8))
-            ax.plot(dates, mn, color=min_color, linewidth=2, label="Min age")
-            ax.plot(dates, avg, color=avg_color, linewidth=2, label="Avg age")
-            ax.plot(dates, mx, color=max_color, linewidth=2, label="Max age")
+            ax.plot(dates, mn, color=min_color, linewidth=2, label="Min age")  # type: ignore[arg-type]
+            ax.plot(dates, avg, color=avg_color, linewidth=2, label="Avg age")  # type: ignore[arg-type]
+            ax.plot(dates, mx, color=max_color, linewidth=2, label="Max age")  # type: ignore[arg-type]
 
             # Threshold guide lines (dashed). Amber = watch, red = needs attention.
             # Average-age bands and oldest(max)-age bands come from settings so
@@ -1477,7 +1534,7 @@ class AnalyticsPage:
             plt.close(fig)
             buf.seek(0)
 
-        b64 = base64.b64encode(buf.read()).decode()
+        b64 = buf.read()
         return ft.Column(
             [
                 ft.Row(
