@@ -21,7 +21,6 @@ SETTINGS_PATH = BOARD_DIR / "settings.json"
 TRANSITIONS_LOG = BOARD_DIR / "transitions.jsonl"
 
 CACHE_DB = REPO_ROOT / ".cache.db"
-VAULT_DB = REPO_ROOT / ".db"
 ENV_FILE = REPO_ROOT / ".env"
 MODELS_CONFIG_PATH = BOARD_DIR / "models.yml"
 UI_STATE_PATH = BOARD_DIR / "ui_state.json"

@@ -10,7 +10,6 @@ from board import epics as _epics
 from board import operations
 from board.models import _UNSET
 from board.settings import ModelDef, ReasoningEffort
-from vault.vault import VaultLockedException, list_secret_names
 
 _TOOLS = [
     {
@@ -256,14 +255,6 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "list_secret_names",
-            "description": "List names of secrets stored in the vault (values are never exposed)",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "convert_timestamps_to_local",
             "description": (
                 "Convert one or more UTC ISO-8601 timestamps (from card created_at / updated_at fields) "
@@ -394,7 +385,7 @@ def _local_tz_context() -> str:
     )
 
 _ASK_PROMPT = _build_base_prompt() + """
-You are in ASK mode (read-only). You may read the board and list secret names to
+You are in ASK mode (read-only). You may read the board to
 answer questions, but you must NOT create, update, move, or archive cards. If the
 user asks you to change the board, tell them to switch to the appropriate mode. Be concise."""
 
@@ -422,7 +413,7 @@ action, then briefly confirm what you changed. Be concise and action-oriented.""
 _PROMPTS = {"ask": _ASK_PROMPT, "agent": _AGENT_PROMPT, "plan": _PLAN_PROMPT, "yolo": _YOLO_PROMPT}
 
 # Tools that only read state — available in every mode.
-_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_secret_names", "list_epics", "convert_timestamps_to_local", "get_board_summary", "get_health_model"}
+_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_epics", "convert_timestamps_to_local", "get_board_summary", "get_health_model"}
 
 _WRITE_TOOL_NAMES = {
     "create_card", "update_card", "move_card", "archive_card",
@@ -552,17 +543,6 @@ def _dispatch_tool(name: str, args: dict) -> str:
     if name == "unlink_cards":
         err = operations.unlink_cards(args["from_number"], args["to_number"], args["link_type"])
         return json.dumps({"ok": err is None, "error": err})
-
-    if name == "list_secret_names":
-        try:
-            return json.dumps(list_secret_names())
-        except VaultLockedException:
-            return json.dumps(
-                {
-                    "error": "vault_locked",
-                    "message": "Vault is locked; secret names are unavailable.",
-                }
-            )
 
     if name == "convert_timestamps_to_local":
         now_local = datetime.now(timezone.utc).astimezone()

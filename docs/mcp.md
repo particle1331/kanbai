@@ -51,8 +51,8 @@ aren't offered.
 
 | `KANBAI_MCP_ACCESS` | Tools exposed | Use case |
 |---------------------|---------------|----------|
-| `read` | read-only: list/get/summary/list_epics + `vault_list_secrets` | Reporting, dashboards, untrusted / 3rd-party agents. |
-| `write` *(default)* | read **+** create/update/move/archive/unarchive/link/epics/`vault_store_secret` | Trusted automation; **no permanent delete**. |
+| `read` | read-only: list/get/summary/list_epics | Reporting, dashboards, untrusted / 3rd-party agents. |
+| `write` *(default)* | read **+** create/update/move/archive/unarchive/link/epics | Trusted automation; **no permanent delete**. |
 | `yolo` | write **+** `delete_card` | Explicit opt-in for an agent you fully trust; allows irreversible deletion. |
 
 This maps directly onto the chat agent's Ask/Plan (read) → Agent (write) → Yolo
@@ -82,7 +82,7 @@ $env:KANBAI_MCP_ACCESS = "yolo"; uv run python main.py --mcp
 
 ## Current capabilities (tool catalog)
 
-The server exposes **17 tools**, grouped by the tier that unlocks them.
+The server exposes **15 tools**, grouped by the tier that unlocks them.
 
 ### Read tier (always available)
 
@@ -90,9 +90,12 @@ The server exposes **17 tools**, grouped by the tier that unlocks them.
 |------|-------------|
 | `list_cards` | List/filter cards by lane, tags, archived, text query, or epic. |
 | `get_card` | Full details of one card by ID. |
+| `get_card_by_number` | Look up a card by its task number. |
 | `list_epics` | Epic names (optionally including archived). |
 | `get_board_summary` | Aggregated analytics: counts by lane/priority, completion %, avg age, top tags, 90-day CFD, this-year heatmap. Optional epic filter. |
-| `vault_list_secrets` | Secret **names** only (empty if vault locked). |
+| `project_health` | Overall project health (good/watch/bad) plus the 8 A-series signals. |
+| `health_model` | Full health model documentation as Markdown. |
+| `list_docs` / `get_doc` | Discover and read Kanbai documentation files. |
 
 ### Write tier (`write` and `yolo`)
 
@@ -105,16 +108,12 @@ The server exposes **17 tools**, grouped by the tier that unlocks them.
 | `set_card_epic` | Assign an epic to a card by task number. |
 | `archive_epic` / `unarchive_epic` | Archive/restore an epic + its snapshotted cards. |
 | `link_cards` / `unlink_cards` | Typed relationships (auto-inverse). |
-| `vault_store_secret` | Store/update a named secret (write-only — can't read back). |
 
 ### Yolo tier (`yolo` only)
 
 | Tool | Description |
 |------|-------------|
 | `delete_card` | **Permanent** delete. Requires the card to be archived first; irreversible. |
-
-> **There is no `vault_get_secret`** at any tier. External agents can learn a
-> secret's name but never its value. See [vault.md](vault.md#the-agent-boundary).
 
 ---
 
@@ -137,7 +136,7 @@ sequenceDiagram
 ```
 
 The MCP layer is a thin wrapper: each tool validates/loads inputs and delegates
-to `operations.py` (or `epics.py` / `vault.py`).
+to `operations.py` (or `epics.py`).
 
 ---
 
@@ -147,10 +146,10 @@ MCP clients launch the server as a subprocess. The shape is the same everywhere;
 syntax varies by client.
 
 > **Kanbai anchors its data to its own repo location, not the launch directory.**
-> All data paths (`board_data/`, `.db`, `.cache.db`, `.env`) resolve
-> relative to `paths.py` in the Kanbai repo — see [`paths.py`](../paths.py). So
-> you can launch the server from **any** working directory as long as you point
-> at Kanbai's `main.py` by **absolute path**. The common case is "I'm coding in
+> All data paths (`board_data/`, `.cache.db`, `.env`) resolve relative to
+> `paths.py` in the Kanbai repo — see [`paths.py`](../paths.py). So you can
+> launch the server from **any** working directory as long as you point at
+> Kanbai's `main.py` by **absolute path**. The common case is "I'm coding in
 > *project-X* and want its agent to manage my Kanbai board," and that just works.
 
 **Generic stdio server entry:**
@@ -219,9 +218,6 @@ board tracks work for a codebase it doesn't live in.
 - Paths anchor to the Kanbai repo via `paths.py`, so `cwd` doesn't matter —
   just reference `main.py` by absolute path (and `--project` for the env).
 - Set `KANBAI_MCP_ACCESS` per client to choose its tier (defaults to `write`).
-- The vault is only usable over MCP if `KANBAI_VAULT_PASS` is present in the
-  environment the server process inherits — Kanbai loads the Kanbai repo's
-  `.env` automatically, or you can set it in the client's `env` block.
 - The SQLite cache is rebuilt from Markdown on startup, so an MCP-launched
   process always sees current board state.
 - One client = one subprocess. The board files are the shared state, so multiple
@@ -246,14 +242,13 @@ file-system permissions**:
 
 - Whoever can run `uv run python main.py --mcp` in your repo already has your
   local file access — they could edit `board_data/` directly anyway.
-- The server inherits the launching environment, so `KANBAI_VAULT_PASS` and
-  `KANBAI_MCP_ACCESS` come from *your* shell/client config, not from the agent.
+- The server inherits the launching environment, so `KANBAI_MCP_ACCESS` comes
+  from *your* shell/client config, not from the agent.
 
 So "authentication" here is really **local trust + capability scoping**:
 
 1. **You** decide which clients may launch the server (their config files).
 2. **`KANBAI_MCP_ACCESS`** decides what that launched instance can do.
-3. **The vault** stays opaque regardless — no value-read path exists at any tier.
 
 ```mermaid
 flowchart LR
@@ -288,13 +283,11 @@ use `KANBAI_MCP_ACCESS` to scope each client.** Treat `yolo` like `sudo`.
 
 - **Capability scoping via `KANBAI_MCP_ACCESS`** (`read` / `write` / `yolo`) —
   tools above the tier aren't registered, so they can't be invoked.
-- **Vault values are unreachable** over MCP (no get-value tool at any tier) —
-  the strongest guarantee.
 - **Permanent deletion is gated** behind the explicit `yolo` tier; `write`
   (the default) can only archive.
 - **Authentication = local launch trust.** stdio means "whoever can start the
   process," scoped further by the access tier. No network surface, no login.
-- **No per-call audit log** of MCP actions yet (the vault logs rekeys only).
+- **No per-call audit log** of MCP actions yet.
 - **No write locking** between concurrent callers — board files are last-write-
   wins per card.
 

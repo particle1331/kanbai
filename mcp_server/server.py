@@ -7,14 +7,12 @@ from fastmcp import FastMCP
 
 from board import epics as _epics
 from board import operations
-from vault.vault import VaultLockedException, list_secret_names, store_secret
 
 mcp = FastMCP(
     "kanbai",
     instructions=(
         "Kanbai is an agent-compatible Kanban board. "
-        "Use the tools to manage cards across lanes (backlog, in_progress, review, done) "
-        "and to interact with the encrypted secrets vault. "
+        "Use the tools to manage cards across lanes (backlog, in_progress, review, done). "
         "Call list_docs to discover available documentation (kanban principles, flow metrics, etc.) "
         "and get_doc to read the full content of any doc. "
         "Always consult the kanban principles before making board decisions."
@@ -23,8 +21,8 @@ mcp = FastMCP(
 
 # --- Access tiers -----------------------------------------------------------
 # KANBAI_MCP_ACCESS controls which tools external agents may call:
-#   read  -> read-only tools only (list/get/summary/vault-names)
-#   write -> read + create/update/move/archive/link/epics/store-secret (default)
+#   read  -> read-only tools only (list/get/summary)
+#   write -> read + create/update/move/archive/link/epics (default)
 #   yolo  -> write + permanent deletion (delete_card)
 # Tools above the configured tier are never registered, so a jailbroken prompt
 # cannot reach them — they simply aren't offered to the client.
@@ -237,30 +235,10 @@ def get_board_summary(epic: str | None = None) -> dict:
     }
 
 
-@tool("read")
-def vault_list_secrets() -> list[str]:
-    """List names of secrets in the encrypted vault. Returns nothing unless the vault is unlocked. Values are never exposed over MCP."""
-    try:
-        return list_secret_names()
-    except VaultLockedException:
-        return []
-
-
-@tool("write")
-def vault_store_secret(name: str, value: str) -> dict:
-    """Store or update a named secret in the encrypted vault."""
-    try:
-        store_secret(name, value)
-        return {"success": True, "name": name}
-    except VaultLockedException:
-        return {"error": "vault_locked", "message": "Set KANBAI_VAULT_PASS and restart the app."}
-
-
 _DOCS_DIR = Path(__file__).parent.parent / "docs"
 
 _DOC_META: dict[str, str] = {
     "mcp": "MCP server setup, available tools, and access tier documentation.",
-    "vault": "Encrypted secrets vault usage and security model.",
 }
 
 

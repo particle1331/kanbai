@@ -54,7 +54,6 @@ def init_db() -> None:
                 archived INTEGER DEFAULT 0,
                 description TEXT DEFAULT '',
                 attachments TEXT DEFAULT '',
-                secrets TEXT DEFAULT '',
                 epic TEXT DEFAULT NULL,
                 number INTEGER DEFAULT NULL,
                 links TEXT DEFAULT '[]',
@@ -99,8 +98,8 @@ def upsert_card(card: Card) -> None:
             """
             INSERT INTO cards
                 (id, title, lane, priority, tags, created_at, updated_at,
-                 archived, description, attachments, secrets, epic, number, links, assigned_to, position, due_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 archived, description, attachments, epic, number, links, assigned_to, position, due_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title       = excluded.title,
                 lane        = excluded.lane,
@@ -111,7 +110,6 @@ def upsert_card(card: Card) -> None:
                 archived    = excluded.archived,
                 description = excluded.description,
                 attachments = excluded.attachments,
-                secrets     = excluded.secrets,
                 epic        = excluded.epic,
                 number      = excluded.number,
                 links       = excluded.links,
@@ -130,7 +128,6 @@ def upsert_card(card: Card) -> None:
                 int(card.archived),
                 card.description,
                 ",".join(card.attachments),
-                ",".join(card.secrets),
                 card.epic,
                 card.number,
                 json.dumps(card.links),

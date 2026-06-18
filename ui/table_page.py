@@ -9,6 +9,7 @@ from ui import theme
 
 _ALL = "__all__"
 _UNASSIGNED = "__none__"
+_PAGE_SIZE = 50
 
 _PRIORITY_COLORS = theme.PRIORITY_COLORS
 _PRIORITY_RANK = {"low": 0, "medium": 1, "high": 2}
@@ -25,6 +26,11 @@ class TablePage:
         self._table: ft.DataTable | None = None
         self._view: ft.Column | None = None
         self._count_text: ft.Text | None = None
+        self._page_info: ft.Text | None = None
+        self._prev_btn: ft.IconButton | None = None
+        self._next_btn: ft.IconButton | None = None
+        self._current_page: int = 0
+        self._total_pages: int = 1
         self._last_refreshed_epic: str | None = "__none__"  # Track last refresh to skip redundant refreshes
 
         # Filter state
@@ -97,6 +103,24 @@ class TablePage:
 
         self._count_text = ft.Text(self._count_label(), size=11, color="#6E7681")
 
+        self._prev_btn = ft.IconButton(
+            icon=ft.Icons.CHEVRON_LEFT,
+            icon_size=18,
+            icon_color="#8B949E",
+            tooltip="Previous page",
+            on_click=self._on_prev_page,
+            disabled=True,
+        )
+        self._next_btn = ft.IconButton(
+            icon=ft.Icons.CHEVRON_RIGHT,
+            icon_size=18,
+            icon_color="#8B949E",
+            tooltip="Next page",
+            on_click=self._on_next_page,
+            disabled=True,
+        )
+        self._page_info = ft.Text(self._page_label(), size=11, color="#6E7681")
+
         toolbar = ft.Container(
             content=ft.Column(
                 [
@@ -115,7 +139,15 @@ class TablePage:
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Row(
-                        [show_archived_sw, ft.Container(expand=True), self._count_text],
+                        [
+                            show_archived_sw,
+                            ft.Container(expand=True),
+                            self._count_text,
+                            ft.Container(width=16),
+                            self._prev_btn,
+                            self._page_info,
+                            self._next_btn,
+                        ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
@@ -181,6 +213,7 @@ class TablePage:
         self._table.sort_ascending = self._sort_asc
         if self._count_text is not None:
             self._count_text.value = self._count_label()
+        self._update_pagination_controls()
         if refresh_filters:
             self._refresh_filter_options()
         self._page.update()
@@ -257,26 +290,32 @@ class TablePage:
 
     def _on_search_change(self, e) -> None:
         self._search = (e.control.value or "").strip()
+        self._current_page = 0
         self.refresh()
 
     def _on_epic_change(self, e) -> None:
         self._filter_epic = e.control.value or _ALL
+        self._current_page = 0
         self.refresh()
 
     def _on_status_change(self, e) -> None:
         self._filter_status = e.control.value or _ALL
+        self._current_page = 0
         self.refresh()
 
     def _on_priority_change(self, e) -> None:
         self._filter_priority = e.control.value or _ALL
+        self._current_page = 0
         self.refresh()
 
     def _on_tag_change(self, e) -> None:
         self._filter_tag = e.control.value or _ALL
+        self._current_page = 0
         self.refresh()
 
     def _on_due_change(self, e) -> None:
         self._filter_due = e.control.value or _ALL
+        self._current_page = 0
         self.refresh()
 
     def _on_clear_filters(self, e) -> None:
@@ -286,12 +325,36 @@ class TablePage:
         self._filter_priority = _ALL
         self._filter_tag = _ALL
         self._filter_due = _ALL
+        self._current_page = 0
         if self._search_field is not None:
             self._search_field.value = ""
         for dd in (self._epic_dd, self._status_dd, self._priority_dd, self._tag_dd, self._due_dd):
             if dd is not None:
                 dd.value = _ALL
         self.refresh()
+
+    # ── Pagination ────────────────────────────────────────────────
+
+    def _on_prev_page(self, e) -> None:
+        if self._current_page > 0:
+            self._current_page -= 1
+            self._rerender(refresh_filters=False)
+
+    def _on_next_page(self, e) -> None:
+        if self._current_page < self._total_pages - 1:
+            self._current_page += 1
+            self._rerender(refresh_filters=False)
+
+    def _page_label(self) -> str:
+        return f"{self._current_page + 1} / {self._total_pages}"
+
+    def _update_pagination_controls(self) -> None:
+        if self._prev_btn is not None:
+            self._prev_btn.disabled = self._current_page <= 0
+        if self._next_btn is not None:
+            self._next_btn.disabled = self._current_page >= self._total_pages - 1
+        if self._page_info is not None:
+            self._page_info.value = self._page_label()
 
     # ── Data ────────────────────────────────────────────────────────
 
@@ -415,8 +478,14 @@ class TablePage:
     _COLS = ["#", "Title", "Epic", "Status", "Priority", "Tags", "Assignees", "Created", "Updated", "Age", "Due", "Due In"]
 
     def _build_table(self) -> ft.DataTable:
-        rows_data = self._filtered_rows()
-        self._row_count = len(rows_data)
+        all_rows_data = self._filtered_rows()
+        self._row_count = len(all_rows_data)
+        self._total_pages = max(1, -(-self._row_count // _PAGE_SIZE))  # ceil div
+        # Clamp page
+        if self._current_page >= self._total_pages:
+            self._current_page = max(0, self._total_pages - 1)
+        start = self._current_page * _PAGE_SIZE
+        rows_data = all_rows_data[start : start + _PAGE_SIZE]
 
         def make_sort(idx: int):
             def handler(e):
@@ -425,6 +494,7 @@ class TablePage:
                 else:
                     self._sort_col = idx
                     self._sort_asc = True
+                self._current_page = 0
                 self._rerender(refresh_filters=False)
             return handler
 
@@ -613,4 +683,5 @@ class TablePage:
 
     def _on_toggle_archived(self, value: bool) -> None:
         self._show_archived = bool(value)
+        self._current_page = 0
         self.refresh()

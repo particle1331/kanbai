@@ -911,7 +911,6 @@ name = "kanbai"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "cryptography" },
     { name = "dotenv" },
     { name = "fastapi", extra = ["standard"] },
     { name = "fastmcp" },

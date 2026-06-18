@@ -41,7 +41,6 @@ class Card:
     archived: bool = False
     description: str = ""
     attachments: list[str] = field(default_factory=list)
-    secrets: list[str] = field(default_factory=list)
     epic: str | None = None
     number: int | None = None
     links: list[dict] = field(default_factory=list)
@@ -61,7 +60,6 @@ class Card:
             "updated_at": self.updated_at,
             "archived": self.archived,
             "attachments": self.attachments,
-            "secrets": self.secrets,
             "epic": self.epic,
             "number": self.number,
             "links": self.links,
@@ -84,7 +82,6 @@ class Card:
             archived=bool(meta.get("archived", False)),
             description=body.strip(),
             attachments=list(meta.get("attachments") or []),
-            secrets=list(meta.get("secrets") or []),
             epic=meta.get("epic") or None,
             number=int(meta["number"]) if meta.get("number") is not None else None,
             links=list(meta.get("links") or []),

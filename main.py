@@ -17,10 +17,8 @@ def run_app() -> None:
     from paths import ASSETS_DIR
     import paths
     from board.storage.sync import full_sync
-    from vault.vault import init_vault
     from ui.card_dialog import open_create_dialog, open_edit_dialog
     from ui.chat_panel import ChatPanel
-    from ui.vault_panel import VaultPanel
     from ui.kanban_page import KanbanPage
     from ui.table_page import TablePage
     from ui.health_page import HealthPage
@@ -44,7 +42,6 @@ def run_app() -> None:
             page.window.min_height = 600
 
             synced = full_sync()
-            vault_ok = init_vault()
 
             # Navigation stack so that opening a linked card from within a card
             # dialog returns to the previous card when the new one is closed
@@ -131,7 +128,7 @@ def run_app() -> None:
                     height=28,
                 )
 
-            # Health badge shown in the header, left of Vault Ready.
+            # Health badge shown in the header.
             _health_header_badge = ft.Container(visible=False)
 
             def _refresh_health_badge() -> None:
@@ -258,32 +255,6 @@ def run_app() -> None:
                 _refresh_health_badge()
 
             chat = ChatPanel(page, on_board_change=on_board_change)
-            vault = VaultPanel(page)
-
-            vault_badge = ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Text(
-                            "🔑 Vault ready" if vault_ok else "🔒 Vault locked",
-                            size=11,
-                            color="#4A7C59" if vault_ok else "#8C6A1A",
-                        ),
-                        ft.Icon(
-                            ft.Icons.EXPAND_MORE,
-                            size=13,
-                            color="#4A7C59" if vault_ok else "#8C6A1A",
-                        ),
-                    ],
-                    spacing=2,
-                    tight=True,
-                ),
-                bgcolor="#252526" if vault_ok else "#1A1600",
-                border_radius=4,
-                padding=ft.Padding(3, 8, 3, 8),
-                on_click=vault.toggle,
-                ink=True,
-                tooltip="Open Vault",
-            )
 
             def on_nav_change(e) -> None:
                 idx = e.control.selected_index
@@ -421,7 +392,6 @@ def run_app() -> None:
                         ),
                         ft.Row([
                             _health_header_badge,
-                            vault_badge,
                             ft.Container(
                                 content=ft.Text(
                                     f"{synced} card{'s' if synced != 1 else ''} loaded",
@@ -458,7 +428,6 @@ def run_app() -> None:
             )
 
             chat_overlays = chat.get_overlay_controls()
-            vault_overlays = vault.get_overlay_controls()
 
             page.add(
                 ft.Stack(
@@ -469,7 +438,6 @@ def run_app() -> None:
                             expand=True,
                         ),
                         *chat_overlays,
-                        *vault_overlays,
                     ],
                     expand=True,
                 )
@@ -490,39 +458,6 @@ def run_mcp() -> None:
     run_mcp_server()
 
 
-def run_rekey() -> None:
-    import getpass
-    from vault.vault import rekey_vault, get_rekey_log
-    from cryptography.exceptions import InvalidTag
-
-    print("Kanbai Vault — Rekey")
-    print("=====================")
-
-    log = get_rekey_log()
-    if log:
-        last = log[0]
-        print(f"Last rekeyed: {last['rekeyed_at']}  ({last['secret_count']} secret(s))")
-    else:
-        print("No previous rekey events.")
-
-    print()
-    old_pass = getpass.getpass("Current passphrase: ")
-    new_pass = getpass.getpass("New passphrase:     ")
-    new_pass2 = getpass.getpass("Confirm new:        ")
-
-    if new_pass != new_pass2:
-        print("ERROR: New passphrases do not match. Aborted.")
-        raise SystemExit(1)
-
-    try:
-        count = rekey_vault(old_pass, new_pass)
-        print(f"Rekeyed {count} secret(s) successfully.")
-        print("Update KANBAI_VAULT_PASS in your .env / shell profile to the new passphrase.")
-    except InvalidTag:
-        print("ERROR: Current passphrase is wrong — no changes made.")
-        raise SystemExit(1)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Kanbai — agent-compatible Kanban board")
     parser.add_argument(
@@ -530,17 +465,10 @@ def main() -> None:
         action="store_true",
         help="Run as MCP server over stdio (for external agent connections)",
     )
-    parser.add_argument(
-        "--rekey",
-        action="store_true",
-        help="Re-encrypt vault secrets under a new passphrase",
-    )
     args = parser.parse_args()
 
     if args.mcp:
         run_mcp()
-    elif args.rekey:
-        run_rekey()
     else:
         run_app()
 
