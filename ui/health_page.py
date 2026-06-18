@@ -388,7 +388,6 @@ class HealthPage:
                         ),
                     ],
                     spacing=10,
-                    scroll=ft.ScrollMode.AUTO,
                 ),
                 ft.Container(height=14),
 
@@ -806,7 +805,7 @@ class HealthPage:
             border=ft.Border(bs, bs, bs, bs),
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
-            width=165,
+            expand=True,
             height=140,
             tooltip=_tip(f"In Progress: {in_progress}  │  Review: {review}\n⚠ Watch: >{settings.HEALTH_WIP_WATCH}  │  Bad: >{settings.HEALTH_WIP_BAD}"),
         )
@@ -860,7 +859,7 @@ class HealthPage:
             border=ft.Border(bs, bs, bs, bs),
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
-            width=165,
+            expand=True,
             height=140,
             tooltip=_tip(f"Blocked tasks: {blocked_tasks}\n⚠ Watch: ≥{settings.HEALTH_BLOCKER_WATCH}  │  Bad: ≥{settings.HEALTH_BLOCKER_BAD}"),
         )
@@ -917,7 +916,7 @@ class HealthPage:
             border=ft.Border(bs, bs, bs, bs),
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
-            width=165,
+            expand=True,
             height=140,
             tooltip=_tip(f"Due ≤1d: {due_1d}  ·  Due 2–3d: {due_3d - due_1d}\n⚠ Watch: ≥{settings.HEALTH_DUE_WATCH} in 3d  │  Bad: ≥{settings.HEALTH_DUE_BAD} in 3d or any ≤1d"),
         )
@@ -968,7 +967,7 @@ class HealthPage:
                         [
                             ft.Icon(ft.Icons.HOURGLASS_BOTTOM, size=13, color=_TEXT_MUT),
                             ft.Text(
-                                "WIP MEDIAN AGE", size=10,
+                                "WIP AGE", size=10,
                                 weight=ft.FontWeight.W_600,
                                 color=_TEXT_MUT,
                             ),
@@ -983,7 +982,7 @@ class HealthPage:
                         color=value_color,
                         font_family="monospace",
                     ),
-                    ft.Text("days in WIP lanes", size=11, color=_TEXT_MUT),
+                    ft.Text("median days in WIP lanes", size=11, color=_TEXT_MUT),
                 ],
                 spacing=4,
                 tight=True,
@@ -993,7 +992,7 @@ class HealthPage:
             border=ft.Border(bs, bs, bs, bs),
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
-            width=165,
+            expand=True,
             height=140,
             tooltip=_tip(tooltip_msg),
         )
@@ -1035,7 +1034,7 @@ class HealthPage:
                         [
                             ft.Icon(ft.Icons.TIMER_OUTLINED, size=13, color=_TEXT_MUT),
                             ft.Text(
-                                "MEDIAN CYCLE TIME", size=10,
+                                "CYCLE TIME", size=10,
                                 weight=ft.FontWeight.W_600,
                                 color=_TEXT_MUT,
                             ),
@@ -1050,7 +1049,7 @@ class HealthPage:
                         color=value_color,
                         font_family="monospace",
                     ),
-                    ft.Text("completed in past 7d", size=11, color=_TEXT_MUT),
+                    ft.Text("median completed in past 7d", size=11, color=_TEXT_MUT),
                 ],
                 spacing=4,
                 tight=True,
@@ -1060,7 +1059,7 @@ class HealthPage:
             border=ft.Border(bs, bs, bs, bs),
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
-            width=165,
+            expand=True,
             height=140,
             tooltip=_tip(
                 (f"P25: {p25:.1f}d  ·  P75: {p75:.1f}d"
@@ -1131,7 +1130,7 @@ class HealthPage:
             border=ft.Border(bs, bs, bs, bs),
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
-            width=165,
+            expand=True,
             height=140,
             tooltip=_tip(f"Completed: {completed}  │  Started: {started}\n⚠ Watch: <{settings.HEALTH_THROUGHPUT_WATCH}  │  Bad: <{settings.HEALTH_THROUGHPUT_BAD}"),
         )
@@ -1178,7 +1177,7 @@ class HealthPage:
                         [
                             ft.Icon(ft.Icons.INBOX, size=13, color=_TEXT_MUT),
                             ft.Text(
-                                "MEDIAN BACKLOG AGE", size=10,
+                                "BACKLOG AGE", size=10,
                                 weight=ft.FontWeight.W_600,
                                 color=_TEXT_MUT,
                             ),
@@ -1193,7 +1192,7 @@ class HealthPage:
                         color=value_color,
                         font_family="monospace",
                     ),
-                    ft.Text("days in backlog", size=11, color=_TEXT_MUT),
+                    ft.Text("median days in backlog", size=11, color=_TEXT_MUT),
                 ],
                 spacing=4,
                 tight=True,
@@ -1203,7 +1202,7 @@ class HealthPage:
             border=ft.Border(bs, bs, bs, bs),
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
-            width=165,
+            expand=True,
             height=140,
             tooltip=_tip(tooltip_msg),
         )
@@ -1268,7 +1267,7 @@ class HealthPage:
             border=ft.Border(bs, bs, bs, bs),
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
-            width=165,
+            expand=True,
             height=140,
             tooltip=_tip(f"Started: {started}  │  Created: {created}\n⚠ Watch: <{settings.HEALTH_PULL_RATE_WATCH}  │  Bad: <{settings.HEALTH_PULL_RATE_BAD}"),
         )

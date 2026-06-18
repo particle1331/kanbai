@@ -32,7 +32,7 @@ def run_app() -> None:
             page.bgcolor = "#1E1E1E"
             page.padding = 0
             page.window.width = 1500
-            page.window.height = 1200
+            page.window.height = 1300
             page.update()          # commit dimensions before centering
             try:
                 await page.window.center()

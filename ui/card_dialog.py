@@ -3,6 +3,12 @@ from __future__ import annotations
 import flet as ft
 from datetime import datetime, date
 
+# ── Dialog layout constants ───────────────────────────────────────────────────
+_DIALOG_WIDTH = 810
+_DIALOG_HEIGHT = 660
+_PANEL_HEIGHT = 660
+_SIDEBAR_WIDTH = 280
+
 from board import epics as _epics
 from board import operations
 from board import settings
@@ -102,7 +108,6 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
         multiline=True,
         expand=True,
     )
-    tags_field = ft.TextField(label="Tags (comma-separated)")
     assigned_field = ft.TextField(label="Assigned to (comma-separated)")
     due_row, due_field = _make_due_field(page)
     priority_dd = ft.Dropdown(
@@ -343,37 +348,45 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
         content=ft.Container(
             content=ft.Row(
                 [
-                    ft.Column(
-                        [ft.Container(height=5), title_field, desc_field],
-                        spacing=10,
-                        height=560,
+                    ft.Container(
+                        content=ft.Column(
+                            [ft.Container(height=5), title_field, desc_field],
+                            spacing=10,
+                            expand=True,
+                            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                        ),
+                        height=_PANEL_HEIGHT,
                         expand=True,
-                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                        clip_behavior=ft.ClipBehavior.HARD_EDGE,
                     ),
                     ft.VerticalDivider(width=1, color="#3E3E42"),
-                    ft.Column(
-                        [
-                            ft.Container(height=4),
-                            priority_dd,
-                            tags_field,
-                            _tag_suggestions(tags_field),
-                            assigned_field,
-                            due_row,
-                            error_text,
-                            ft.Divider(height=1, color="#3E3E42"),
-                            rel_section,
-                        ],
-                        spacing=12,
-                        scroll=ft.ScrollMode.AUTO,
-                        height=560,
-                        width=300,
-                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Container(height=4),
+                                priority_dd,
+                                tags_field,
+                                _tag_suggestions(tags_field),
+                                assigned_field,
+                                due_row,
+                                error_text,
+                                ft.Divider(height=1, color="#3E3E42"),
+                                rel_section,
+                            ],
+                            spacing=12,
+                            scroll=ft.ScrollMode.AUTO,
+                            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                        ),
+                        height=_PANEL_HEIGHT,
+                        width=_SIDEBAR_WIDTH,
+                        clip_behavior=ft.ClipBehavior.HARD_EDGE,
                     ),
                 ],
                 spacing=16,
                 vertical_alignment=ft.CrossAxisAlignment.START,
             ),
-            width=960,
+            width=_DIALOG_WIDTH,
+            height=_DIALOG_HEIGHT,
             padding=ft.Padding(0, 8, 0, 0),
         ),
         actions=[
@@ -854,8 +867,7 @@ def open_edit_dialog(
         open_graph_dialog(page, card_id, open_card_fn, on_close=_restore_card_dialog)
 
     # ── Layout constants & helpers ────────────────────────────────────────────
-    _PANEL_HEIGHT = 560
-    _SIDEBAR_WIDTH = 300
+    # layout constants inherited from module level: _PANEL_HEIGHT, _SIDEBAR_WIDTH
     _PRIORITY_COLORS = {"low": "#56D364", "medium": "#D29922", "high": "#F07878"}
     _LANE_COLORS = {
         "backlog": "#6E7681",
@@ -945,38 +957,41 @@ def open_edit_dialog(
             else ft.Text("No description.", size=13, color="#6E7681", italic=True)
         )
 
-        left_col = ft.Column(
-            [
-                ft.Column(
-                    [
-                        ft.Container(
-                            content=ft.Text(
-                                f"#{card.number}",
-                                size=12,
-                                weight=ft.FontWeight.BOLD,
-                                color="#1C2A4A",
-                                font_family="monospace",
+        left_col = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Column(
+                        [
+                            ft.Container(
+                                content=ft.Text(
+                                    f"#{card.number}",
+                                    size=12,
+                                    weight=ft.FontWeight.BOLD,
+                                    color="#1C2A4A",
+                                    font_family="monospace",
+                                ),
+                                bgcolor="#DB8132",
+                                border_radius=6,
+                                padding=ft.Padding(6, 4, 6, 4),
+                            ) if card.number else ft.Container(height=0),
+                            ft.Text(
+                                card.title,
+                                size=20,
+                                weight=ft.FontWeight.W_700,
+                                color="#E6EDF3",
                             ),
-                            bgcolor="#DB8132",
-                            border_radius=6,
-                            padding=ft.Padding(6, 4, 6, 4),
-                        ) if card.number else ft.Container(height=0),
-                        ft.Text(
-                            card.title,
-                            size=20,
-                            weight=ft.FontWeight.W_700,
-                            color="#E6EDF3",
-                        ),
-                    ],
-                    spacing=2,
-                ),
-                ft.Divider(height=1, color="#3E3E42"),
-                desc_widget,
-            ],
-            spacing=12,
-            scroll=ft.ScrollMode.AUTO,
+                        ],
+                        spacing=2,
+                    ),
+                    ft.Divider(height=1, color="#3E3E42"),
+                    desc_widget,
+                ],
+                spacing=12,
+                scroll=ft.ScrollMode.AUTO,
+            ),
             height=_PANEL_HEIGHT,
             expand=True,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
 
         p_color = _PRIORITY_COLORS.get(card.priority, "#6E7681")
@@ -1017,7 +1032,7 @@ def open_edit_dialog(
             if card.assigned_to
             else ft.Text("Nobody", size=12, color="#6E7681", italic=True)
         )
-        right_col = ft.Column(
+        right_col_inner = ft.Column(
             [
                 op_error,
                 _sidebar_section("LANE", _badge(LANE_LABELS.get(card.lane, card.lane), c_color)),
@@ -1045,8 +1060,12 @@ def open_edit_dialog(
             ],
             spacing=14,
             scroll=ft.ScrollMode.AUTO,
+        )
+        right_col = ft.Container(
+            content=right_col_inner,
             height=_PANEL_HEIGHT,
             width=_SIDEBAR_WIDTH,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
 
         return ft.Row(
@@ -1059,12 +1078,16 @@ def open_edit_dialog(
     def _build_edit_content() -> ft.Row:
         _build_link_rows(edit_mode=True)
 
-        left_col = ft.Column(
-            [ft.Container(height=5), title_field, desc_field],
-            spacing=10,
+        left_col = ft.Container(
+            content=ft.Column(
+                [ft.Container(height=5), title_field, desc_field],
+                spacing=10,
+                expand=True,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            ),
             height=_PANEL_HEIGHT,
             expand=True,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
 
         rel_section = ft.Column(
@@ -1084,25 +1107,28 @@ def open_edit_dialog(
             spacing=8,
         )
 
-        right_col = ft.Column(
-            [
-                ft.Container(height=4),
-                ft.Row([priority_dd, lane_dd], spacing=8),
-                epic_dd,
-                tags_field,
-                _tag_suggestions(tags_field),
-                assigned_field,
-                due_row,
-                op_error,
-                ft.Divider(height=1, color="#3E3E42"),
-                _make_fold("rel", "Relationships", rel_section),
-                _comments_section(editable=True),
-            ],
-            spacing=12,
-            scroll=ft.ScrollMode.AUTO,
+        right_col = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Container(height=4),
+                    ft.Row([priority_dd, lane_dd], spacing=8),
+                    epic_dd,
+                    tags_field,
+                    _tag_suggestions(tags_field),
+                    assigned_field,
+                    due_row,
+                    op_error,
+                    ft.Divider(height=1, color="#3E3E42"),
+                    _make_fold("rel", "Relationships", rel_section),
+                    _comments_section(editable=True),
+                ],
+                spacing=12,
+                scroll=ft.ScrollMode.AUTO,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            ),
             height=_PANEL_HEIGHT,
             width=_SIDEBAR_WIDTH,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
 
         return ft.Row(
@@ -1153,7 +1179,8 @@ def open_edit_dialog(
             dlg.title = _title_bar("")
             dlg.content = ft.Container(
                 content=_build_view_content(),
-                width=960,
+                width=_DIALOG_WIDTH,
+                height=_DIALOG_HEIGHT,
                 padding=ft.Padding(0, 8, 0, 0),
             )
             if card.archived:
@@ -1203,7 +1230,8 @@ def open_edit_dialog(
             dlg.title = _title_bar(f"Edit Card{num_str}")
             dlg.content = ft.Container(
                 content=_build_edit_content(),
-                width=960,
+                width=_DIALOG_WIDTH,
+                height=_DIALOG_HEIGHT,
                 padding=ft.Padding(0, 8, 0, 0),
             )
             dlg.actions = [
