@@ -882,6 +882,21 @@ def count_cards_by_tag(limit: int = 10, epic: str | None = None) -> list[tuple[s
     return sorted_tags[:limit]
 
 
+def get_all_assignees() -> list[str]:
+    """Return all unique assignee names across non-archived cards, sorted by frequency."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT assigned_to FROM cards WHERE archived = 0 AND assigned_to != ''",
+        ).fetchall()
+    counts: dict[str, int] = {}
+    for row in rows:
+        for name in row["assigned_to"].split(","):
+            name = name.strip()
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+    return [name for name, _ in sorted(counts.items(), key=lambda x: x[1], reverse=True)]
+
+
 def cfd_data(days: int = 90, epic: str | None = None) -> list[dict]:
     """Approximate Cumulative Flow Diagram data.
 

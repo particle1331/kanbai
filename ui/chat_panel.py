@@ -110,7 +110,7 @@ class ChatPanel:
                 ft.dropdown.Option(m.handle, m.handle)
                 for m in self._models
             ],
-            width=90,
+            width=120,
             dense=True,
             text_style=ft.TextStyle(size=11),
             content_padding=ft.Padding(6, 4, 0, 4),

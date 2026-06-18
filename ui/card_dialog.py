@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import flet as ft
+from collections.abc import Callable
 from datetime import datetime, date
 
 # ── Dialog layout constants ───────────────────────────────────────────────────
@@ -71,34 +72,126 @@ def _make_due_field(page: ft.Page, initial: str = "") -> tuple[ft.Row, ft.TextFi
     return row, due_field
 
 
-def _tag_suggestions(tags_field: ft.TextField) -> ft.Row:
-    """Quick-pick chips for the three default type tags.
+def _get_tag_suggestions() -> list[str]:
+    """Return tag suggestions: existing DB tags (by count) + DEFAULT_TAGS."""
+    db_tags = [t for t, _ in _sc.count_cards_by_tag(limit=50)]
+    seen = set(db_tags)
+    extra = [t for t in DEFAULT_TAGS if t not in seen]
+    return db_tags + extra
 
-    Clicking a chip appends the tag to the comma-separated tags field
-    (no-op if it's already present).
+
+def _chip_input(
+    page: ft.Page,
+    label: str,
+    initial: list[str],
+    all_suggestions: list[str],
+    max_items: int = 10,
+    accent: str = "#58A6FF",
+) -> tuple[ft.Column, "Callable[[], list[str]]"]:
     """
-    def _add_tag(tag: str) -> None:
-        existing = [t.strip() for t in (tags_field.value or "").split(",") if t.strip()]
-        if tag not in existing:
-            existing.append(tag)
-            tags_field.value = ", ".join(existing)
-            tags_field.update()
+    Multi-value chip input with live autocomplete.
+    Returns (widget_column, get_values_fn).
+    """
+    values: list[str] = list(initial)
+    chips_row = ft.Row(wrap=True, spacing=4, run_spacing=4)
+    input_field = ft.TextField(
+        label=label,
+        hint_text="Type and press Enter",
+        text_size=12,
+        height=42,
+        content_padding=ft.Padding(10, 0, 10, 0),
+    )
+    suggestions_row = ft.Row(wrap=True, spacing=4, run_spacing=4)
 
-    chips = [
-        ft.Container(
-            content=ft.Text(tag, size=11, color="#8B949E"),
-            border=ft.Border(
-                ft.BorderSide(1, "#30363D"), ft.BorderSide(1, "#30363D"),
-                ft.BorderSide(1, "#30363D"), ft.BorderSide(1, "#30363D"),
-            ),
-            border_radius=10,
-            padding=ft.Padding(8, 3, 8, 3),
-            on_click=lambda e, t=tag: _add_tag(t),
-            ink=True,
-        )
-        for tag in DEFAULT_TAGS
-    ]
-    return ft.Row([ft.Text("quick:", size=10, color="#4A6278"), *chips], spacing=6)
+    def _render_chips() -> None:
+        chips_row.controls.clear()
+        chips_row.visible = bool(values)
+        for v in list(values):
+            def _remove(e, val=v):
+                if val in values:
+                    values.remove(val)
+                _render_chips()
+                _render_suggestions()
+                page.update()
+            chips_row.controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Text(v, size=11, color=accent),
+                            ft.Text("×", size=12, color=accent),
+                        ],
+                        spacing=4,
+                        tight=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    bgcolor="#21262D",
+                    border_radius=10,
+                    padding=ft.Padding(8, 3, 8, 3),
+                    on_click=_remove,
+                    ink=True,
+                )
+            )
+
+    def _filtered() -> list[str]:
+        q = (input_field.value or "").strip().lower()
+        result = []
+        for s in all_suggestions:
+            if s in values:
+                continue
+            if not q or q in s.lower():
+                result.append(s)
+        return result[:5]
+
+    def _render_suggestions() -> None:
+        suggestions_row.controls.clear()
+        filtered = _filtered()
+        suggestions_row.visible = bool(filtered)
+        for s in filtered:
+            def _pick(e, val=s):
+                if val not in values and len(values) < max_items:
+                    values.append(val)
+                input_field.value = ""
+                _render_chips()
+                _render_suggestions()
+                page.update()
+            suggestions_row.controls.append(
+                ft.Container(
+                    content=ft.Text(s, size=10, color="#8B949E"),
+                    on_click=_pick,
+                    ink=True,
+                    border_radius=8,
+                    padding=ft.Padding(6, 2, 6, 2),
+                )
+            )
+
+    def _on_change(e):
+        _render_suggestions()
+        page.update()
+
+    def _on_submit(e):
+        val = (input_field.value or "").strip()
+        if val and val not in values and len(values) < max_items:
+            values.append(val)
+        input_field.value = ""
+        _render_chips()
+        _render_suggestions()
+        page.update()
+
+    input_field.on_change = _on_change
+    input_field.on_submit = _on_submit
+
+    _render_chips()
+    _render_suggestions()
+
+    widget = ft.Column(
+        [
+            chips_row,
+            input_field,
+            suggestions_row,
+        ],
+        spacing=5,
+    )
+    return widget, lambda: list(values)
 
 
 def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epic: str | None = None) -> None:
@@ -108,7 +201,10 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
         multiline=True,
         expand=True,
     )
-    assigned_field = ft.TextField(label="Assigned to (comma-separated)")
+    _tag_sugg = _get_tag_suggestions()
+    _assignee_sugg = _sc.get_all_assignees()
+    tags_widget, get_tags = _chip_input(page, "Tags", [], _tag_sugg)
+    assigned_widget, get_assigned = _chip_input(page, "Assigned to", [], _assignee_sugg, accent="#DB8132")
     due_row, due_field = _make_due_field(page)
     priority_dd = ft.Dropdown(
         label="Priority",
@@ -296,8 +392,8 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
             page.update()
             return
         _saving[0] = True
-        tags = [t.strip() for t in (tags_field.value or "").split(",") if t.strip()]
-        assigned = [a.strip() for a in (assigned_field.value or "").split(",") if a.strip()]
+        tags = get_tags()
+        assigned = get_assigned()
         try:
             card = operations.create_card(
                 title=title_field.value.strip(),
@@ -365,9 +461,10 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
                             [
                                 ft.Container(height=4),
                                 priority_dd,
-                                tags_field,
-                                _tag_suggestions(tags_field),
-                                assigned_field,
+                                tags_widget,
+                                ft.Container(height=4),
+                                assigned_widget,
+                                ft.Container(height=4),
                                 due_row,
                                 error_text,
                                 ft.Divider(height=1, color="#3E3E42"),
@@ -422,14 +519,10 @@ def open_edit_dialog(
         multiline=True,
         expand=True,
     )
-    tags_field = ft.TextField(
-        label="Tags (comma-separated)",
-        value=", ".join(card.tags),
-    )
-    assigned_field = ft.TextField(
-        label="Assigned to (comma-separated)",
-        value=", ".join(card.assigned_to),
-    )
+    _tag_sugg = _get_tag_suggestions()
+    _assignee_sugg = _sc.get_all_assignees()
+    tags_widget, get_tags = _chip_input(page, "Tags", card.tags, _tag_sugg)
+    assigned_widget, get_assigned = _chip_input(page, "Assigned to", card.assigned_to, _assignee_sugg, accent="#DB8132")
     due_row, due_field = _make_due_field(page, card.due_date or "")
     priority_dd = ft.Dropdown(
         label="Priority",
@@ -786,8 +879,8 @@ def open_edit_dialog(
     # ── Save / archive / delete ───────────────────────────────────────────────
     def _save(e) -> None:
         nonlocal card, original_lane
-        tags = [t.strip() for t in (tags_field.value or "").split(",") if t.strip()]
-        assigned = [a.strip() for a in (assigned_field.value or "").split(",") if a.strip()]
+        tags = get_tags()
+        assigned = get_assigned()
         epic_val = epic_dd.value if epic_dd.value else None
         new_col = lane_dd.value or original_lane
         try:
@@ -1113,9 +1206,10 @@ def open_edit_dialog(
                     ft.Container(height=4),
                     ft.Row([priority_dd, lane_dd], spacing=8),
                     epic_dd,
-                    tags_field,
-                    _tag_suggestions(tags_field),
-                    assigned_field,
+                    tags_widget,
+                    ft.Container(height=4),
+                    assigned_widget,
+                    ft.Container(height=4),
                     due_row,
                     op_error,
                     ft.Divider(height=1, color="#3E3E42"),
