@@ -34,6 +34,7 @@ class ChatPanel:
     def toggle(self, e=None) -> None:
         self._visible = not self._visible
         self._panel_container.visible = self._visible
+        self._fab_container.visible = not self._visible
         self.page.update()
 
     # ------------------------------------------------------------------
@@ -195,8 +196,8 @@ class ChatPanel:
                 spacing=0,
                 expand=True,
             ),
-            width=360,
-            height=540,
+            width=432,
+            height=594,
             padding=0,
             bgcolor="#161B22",
             border_radius=10,
@@ -216,7 +217,7 @@ class ChatPanel:
         self._panel_container = ft.Container(
             content=panel,
             visible=False,
-            bottom=80,
+            bottom=20,
             right=20,
         )
 
@@ -317,7 +318,7 @@ class ChatPanel:
     def _set_status(self, text: str) -> None:
         self._status_text.value = text
         try:
-            self.page.update()
+            self._typing_bubble.update()
         except Exception:
             pass
 
@@ -332,7 +333,8 @@ class ChatPanel:
                 dot.bgcolor = "#58A6FF" if active else "#30363D"
             self._elapsed_text.value = f"{elapsed}s"
             try:
-                self.page.update()
+                # Only update the typing indicator — no full page repaint needed.
+                self._typing_bubble.update()
             except Exception:
                 break
             step += 1
@@ -354,23 +356,26 @@ class ChatPanel:
             try:
                 _settings.reload()
                 # Per-turn streaming state
-                stream_md: ft.Markdown | None = None
+                # We stream into a plain ft.Text (no markdown parsing per token)
+                # and swap it for ft.Markdown on the final flush.
+                stream_txt: ft.Text | None = None
                 stream_bubble: ft.Container | None = None
                 stream_text = ""
                 last_ui_t = [0.0]
 
-                def _on_token(text: str) -> None:
-                    nonlocal stream_md, stream_bubble, stream_text
-                    stream_text += text
-                    if stream_md is None:
+                def _on_token(token: str) -> None:
+                    nonlocal stream_txt, stream_bubble, stream_text
+                    stream_text += token
+                    if stream_txt is None:
                         self._set_status("Typing\u2026")
-                        stream_md, stream_bubble = self._start_streaming_bubble()
-                    stream_md.value = stream_text
+                        stream_txt, stream_bubble = self._start_streaming_bubble()
+                    stream_txt.value = stream_text
                     now = time.time()
-                    if now - last_ui_t[0] >= 0.08:
+                    if now - last_ui_t[0] >= 0.12:
                         last_ui_t[0] = now
                         try:
-                            self.page.update()
+                            # Only repaint the message list — not the whole page.
+                            self._msg_list.update()
                         except Exception:
                             pass
 
@@ -386,7 +391,10 @@ class ChatPanel:
                     self._tool_call_log.append({"name": name, "args": args})
                     self._set_status("Executing\u2026")
                     if name in _WRITE_NAMES and base_board_refresh:
-                        base_board_refresh()
+                        # Run in a background thread so it doesn't block the
+                        # agent loop — board UI updates are nice-to-have during
+                        # execution, not on the critical path.
+                        threading.Thread(target=base_board_refresh, daemon=True).start()
 
                 reply, updated, meta = agent_chat.chat(
                     self._messages, mode=self._mode, model=self._model,
@@ -400,9 +408,16 @@ class ChatPanel:
                 self._messages = [
                     m for m in updated if m.get("role") in ("user", "assistant")
                 ]
-                # Final flush / fallback
-                if stream_md is not None:
-                    stream_md.value = stream_text
+                # Final flush — replace streaming ft.Text with rendered ft.Markdown,
+                # then do a single full page.update() to repaint everything at once.
+                if stream_txt is not None and stream_bubble is not None:
+                    final_md = ft.Markdown(
+                        stream_text,
+                        selectable=True,
+                        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                        code_theme=ft.MarkdownCodeTheme.ATOM_ONE_DARK,
+                    )
+                    stream_bubble.content = final_md
                     try:
                         self.page.update()
                     except Exception:
@@ -584,16 +599,21 @@ class ChatPanel:
         except Exception:
             pass
 
-    def _start_streaming_bubble(self) -> tuple[ft.Markdown, ft.Container]:
-        """Append an empty assistant bubble; return (Markdown, Container) for live updates."""
-        md = ft.Markdown(
+    def _start_streaming_bubble(self) -> tuple[ft.Text, ft.Container]:
+        """Append an empty assistant bubble; return (Text, Container) for live token updates.
+
+        We use a plain ft.Text during streaming to avoid re-parsing the growing
+        markdown string on every token update.  The caller swaps it out for
+        ft.Markdown on the final flush.
+        """
+        txt = ft.Text(
             "",
             selectable=True,
-            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
-            code_theme=ft.MarkdownCodeTheme.ATOM_ONE_DARK,
+            size=12,
+            color="#E6EDF3",
         )
         bubble = ft.Container(
-            content=md,
+            content=txt,
             bgcolor="#1C2128",
             border_radius=ft.BorderRadius(top_left=12, top_right=12, bottom_left=0, bottom_right=12),
             padding=ft.Padding(8, 12, 8, 12),
@@ -605,7 +625,7 @@ class ChatPanel:
             self.page.update()
         except Exception:
             pass
-        return md, bubble
+        return txt, bubble
 
     def _reset_context(self, e=None) -> None:
         if not self._messages:

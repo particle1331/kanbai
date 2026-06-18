@@ -18,6 +18,7 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 import flet as ft
 import flet_charts as fch
 
+from board import settings
 from board.storage import sqlite_cache
 from ui import theme
 
@@ -39,6 +40,11 @@ _MPL_BG     = "#1C2128"
 _MPL_GRID   = "#30363D"
 
 _BAND_COLOR = {"good": _GREEN, "watch": _AMBER, "bad": _RED}
+
+# Faster tooltip for every interactive element on this page
+_TIP_MS = 400
+def _tip(msg: str) -> ft.Tooltip:
+    return ft.Tooltip(message=msg, wait_duration=_TIP_MS)
 
 # Sentinel — distinct from any real epic (including None = "All")
 _NEVER_REFRESHED = object()
@@ -105,6 +111,28 @@ class HealthPage:
         self._heatmap_year: int = dt.date.today().year
         self._heatmap_container: ft.Container | None = None
 
+        # ── Chart range state (persist across epic changes) ────────────────
+        self._range_pull_rate: int = 28
+        self._range_tp_wip: int = 28
+        self._range_ct_trend: int = 28
+        self._range_ct_hist: int = 28
+        self._range_cfd: int = 60
+        self._range_backlog_age: int = 28
+
+        # ── Per-chart updatable containers (set during _build_body) ──────────
+        self._chart_cnt_pull_rate: ft.Container | None = None
+        self._chart_cnt_tp_wip: ft.Container | None = None
+        self._chart_cnt_ct_trend: ft.Container | None = None
+        self._chart_cnt_ct_hist: ft.Container | None = None
+        self._chart_cnt_cfd: ft.Container | None = None
+        self._chart_cnt_backlog_age: ft.Container | None = None
+        self._btns_cnt_pull_rate: ft.Container | None = None
+        self._btns_cnt_tp_wip: ft.Container | None = None
+        self._btns_cnt_ct_trend: ft.Container | None = None
+        self._btns_cnt_ct_hist: ft.Container | None = None
+        self._btns_cnt_cfd: ft.Container | None = None
+        self._btns_cnt_backlog_age: ft.Container | None = None
+
     # ── Flow helpers ──────────────────────────────────────────────────────────
 
     def _flow(self, days: int) -> dict[str, int]:
@@ -156,15 +184,19 @@ class HealthPage:
             return
         self._last_refreshed_epic = self._selected_epic
         import threading
+        import traceback
         def _do() -> None:
-            header = self._build_header()
-            body = self._build_body()
-            self._view.controls[0] = header          # type: ignore[index]
-            self._view.controls[1].content = body    # type: ignore[index]
             try:
-                self._page.update()
+                header = self._build_header()
+                body = self._build_body()
+                self._view.controls[0] = header          # type: ignore[index]
+                self._view.controls[1].content = body    # type: ignore[index]
+                try:
+                    self._page.update()
+                except Exception:
+                    pass
             except Exception:
-                pass
+                traceback.print_exc()
         threading.Thread(target=_do, daemon=True).start()
 
     def _build_header(self) -> ft.Container:
@@ -236,41 +268,90 @@ class HealthPage:
             if flow_7["created"] > 0 else None
         )
 
-        # Spec thresholds (kanban_system_spec.docx §1.2)
+        # A-series stat card bands (all keyed off settings.py constants)
+        def _due_band_fn(d3: int, d1: int) -> str:
+            if d3 >= settings.HEALTH_DUE_BAD or d1 >= 1:
+                return "bad"
+            if d3 >= settings.HEALTH_DUE_WATCH:
+                return "watch"
+            return "good"
+
         kpi_bands = {
-            "c7":   _band_inv(completed_7d,  3,   1),
-            "pull": _band_inv(pull_7d,        3,   1),
-            "wip":  _band_dir(wip_now,        5,   8),
-            "tp7":  _band_inv(tp7_val,       0.6, 0.4),
-            "blk":  _band_gte(blocker_count,  2,   4),
-            "due":  _band_gte(due_3d,         3,   5),
+            "wip":  _band_dir(wip_now,       settings.HEALTH_WIP_WATCH,         settings.HEALTH_WIP_BAD),
+            "tp7":  _band_inv(tp7_val,       settings.HEALTH_THROUGHPUT_WATCH,  settings.HEALTH_THROUGHPUT_BAD),
+            "pull": _band_inv(pull_7d,       settings.HEALTH_PULL_RATE_WATCH,   settings.HEALTH_PULL_RATE_BAD),
+            "blk":  _band_gte(blocker_count, settings.HEALTH_BLOCKER_WATCH,     settings.HEALTH_BLOCKER_BAD),
+            "due":  _due_band_fn(due_3d, due_1d),
         }
 
         wip_age       = sqlite_cache.wip_age_stats(epic=epic)
         backlog_age   = sqlite_cache.backlog_age_stats(epic=epic)
         median_ct_7d  = sqlite_cache.median_cycle_time_days(7, epic=epic)
-        stale_cards   = sqlite_cache.stale_wip_cards_started(5, epic=epic)
+        stale_cards   = sqlite_cache.stale_wip_cards_started(settings.STALE_WIP_DAYS, epic=epic)
         blocker_cards      = sqlite_cache.blocker_cards(9999, epic=epic)
         aged_backlog_cards = sqlite_cache.backlog_aged_cards(epic=epic)
-        aging_series  = sqlite_cache.backlog_aging_timeseries(28, epic=epic)
-        ct_hist       = sqlite_cache.cycle_time_histogram(28, epic=epic)
-        ct_weekly     = sqlite_cache.cycle_time_rolling(60, window=14, epic=epic)
+        aging_series  = sqlite_cache.backlog_aging_timeseries(self._range_backlog_age, epic=epic)
+        ct_hist       = sqlite_cache.cycle_time_histogram(self._range_ct_hist, epic=epic)
+
+        # B1: % of completed cards with cycle time > 3d (higher = worse)
+        _ct_total = sum(ct_hist.values())
+        _ct_over_3d = sum(ct_hist.get(k, 0) for k in ["4", "5", "6+"])
+        ct_over_3d_pct: float | None = (_ct_over_3d / _ct_total * 100) if _ct_total > 0 else None
+        ct_hist_band = _band_dir(ct_over_3d_pct, 50, 70)
+        ct_hist_badge: tuple[str, str] | None = (
+            (f"{ct_over_3d_pct:.0f}% > 3d", ct_hist_band)
+            if ct_over_3d_pct is not None else None
+        )
+        ct_weekly     = sqlite_cache.cycle_time_rolling(self._range_ct_trend, window=14, epic=epic)
         wip_comp      = sqlite_cache.wip_composition(epic=epic)
+        backlog_comp  = sqlite_cache.backlog_composition(epic=epic)
         comp_comp     = sqlite_cache.completed_composition(28, epic=epic)
-        tp_wip_series = sqlite_cache.daily_throughput_wip(28, epic=epic)
-        pull_series   = sqlite_cache.daily_pull_rate(28, epic=epic)
-        cfd           = sqlite_cache.cfd_data(60, epic=epic)
+        tp_wip_series = sqlite_cache.daily_throughput_wip(self._range_tp_wip, epic=epic)
+        pull_series   = sqlite_cache.daily_pull_rate(self._range_pull_rate, epic=epic)
+        cfd           = sqlite_cache.cfd_data(self._range_cfd, epic=epic)
 
-        current_aging = aging_series[-1] if aging_series else None
+        # ── Per-chart range-selector containers ─────────────────────────────
+        self._btns_cnt_pull_rate = ft.Container(
+            content=self._range_btn_row([14, 28, 60], self._range_pull_rate, self._set_range_pull_rate)
+        )
+        self._chart_cnt_pull_rate = ft.Container(
+            content=self._chart_pull_rate(pull_series)
+        )
 
-        # % within 3d badge for histogram
-        total_ct  = sum(ct_hist.values())
-        within3   = ct_hist.get("1", 0) + ct_hist.get("2", 0) + ct_hist.get("3", 0)
-        pct_w3    = round(within3 / total_ct * 100) if total_ct > 0 else None
-        ct_badge: tuple[str, str] | None = None
-        if pct_w3 is not None:
-            ct_band  = "bad" if pct_w3 < 50 else "watch" if pct_w3 < 70 else "good"
-            ct_badge = (f"{pct_w3}% within 3d", ct_band)
+        self._btns_cnt_tp_wip = ft.Container(
+            content=self._range_btn_row([14, 28, 60], self._range_tp_wip, self._set_range_tp_wip)
+        )
+        self._chart_cnt_tp_wip = ft.Container(
+            content=self._chart_throughput_wip(tp_wip_series)
+        )
+
+        self._btns_cnt_ct_trend = ft.Container(
+            content=self._range_btn_row([14, 28, 60], self._range_ct_trend, self._set_range_ct_trend)
+        )
+        self._chart_cnt_ct_trend = ft.Container(
+            content=self._chart_ct_weekly_trend_mpl(ct_weekly)
+        )
+
+        self._btns_cnt_ct_hist = ft.Container(
+            content=self._range_btn_row([14, 28, 60], self._range_ct_hist, self._set_range_ct_hist)
+        )
+        self._chart_cnt_ct_hist = ft.Container(
+            content=self._chart_ct_histogram_mpl(ct_hist)
+        )
+
+        self._btns_cnt_cfd = ft.Container(
+            content=self._range_btn_row([30, 60, 90], self._range_cfd, self._set_range_cfd)
+        )
+        self._chart_cnt_cfd = ft.Container(
+            content=self._chart_cfd_mpl(cfd)
+        )
+
+        self._btns_cnt_backlog_age = ft.Container(
+            content=self._range_btn_row([14, 28, 60], self._range_backlog_age, self._set_range_backlog_age)
+        )
+        self._chart_cnt_backlog_age = ft.Container(
+            content=self._chart_backlog_aging_mpl(aging_series)
+        )
 
         return ft.Column(
             [
@@ -315,9 +396,10 @@ class HealthPage:
                     [
                         ft.Container(
                             content=self._panel(
-                                "Pull Rate (7d window)",
-                                self._chart_pull_rate(pull_series),
-                                badge=self._pull_rate_badge(pull_series),
+                                "Pull Rate (7d rolling)",
+                                self._chart_cnt_pull_rate,
+                                header_right=self._btns_cnt_pull_rate,
+                                reading_guide="Sustained values below 0.5 mean backlog is growing faster than work is pulled.",
                             ),
                             expand=1,
                             height=340,
@@ -326,8 +408,9 @@ class HealthPage:
                         ft.Container(
                             content=self._panel(
                                 "Throughput & WIP Trend",
-                                self._chart_throughput_wip(tp_wip_series),
-                                badge=self._tp_badge(tp_wip_series),
+                                self._chart_cnt_tp_wip,
+                                header_right=self._btns_cnt_tp_wip,
+                                reading_guide="Rising WIP with flat throughput signals accumulation. Watch for divergence.",
                             ),
                             expand=1,
                             height=340,
@@ -343,8 +426,10 @@ class HealthPage:
                     [
                         ft.Container(
                             content=self._panel(
-                                "Cycle Time 7D Window (median + IQR)",
-                                self._chart_ct_weekly_trend_mpl(ct_weekly),
+                                "Cycle Time Trend (median + IQR)",
+                                self._chart_cnt_ct_trend,
+                                header_right=self._btns_cnt_ct_trend,
+                                reading_guide="Rising median signals slower delivery. Wide IQR means inconsistent sizing.",
                             ),
                             expand=1,
                             height=340,
@@ -352,9 +437,11 @@ class HealthPage:
                         ft.Container(width=12),
                         ft.Container(
                             content=self._panel(
-                                "Cycle Time Distribution (last 4 weeks)",
-                                self._chart_ct_histogram_mpl(ct_hist),
-                                badge=ct_badge,
+                                "Cycle Time Distribution",
+                                self._chart_cnt_ct_hist,
+                                header_right=self._btns_cnt_ct_hist,
+                                badge=ct_hist_badge,
+                                reading_guide="Heavy right tail means too many cards taking longer than 3 days.",
                             ),
                             expand=1,
                             height=340,
@@ -370,9 +457,10 @@ class HealthPage:
                     [
                         ft.Container(
                             content=self._panel(
-                                "Cumulative Flow Diagram (60d)",
-                                self._chart_cfd_mpl(cfd),
-                                badge=("60d", "good"),
+                                "Cumulative Flow Diagram",
+                                self._chart_cnt_cfd,
+                                header_right=self._btns_cnt_cfd,
+                                reading_guide="Widening bands = growing WIP. Parallel bands = stable flow. Flat done line = stalled delivery.",
                             ),
                             expand=1,
                             height=340,
@@ -381,8 +469,9 @@ class HealthPage:
                         ft.Container(
                             content=self._panel(
                                 "Backlog Age (Median + IQR)",
-                                self._chart_backlog_aging_mpl(aging_series),
-                                badge=self._aging_badge(current_aging),
+                                self._chart_cnt_backlog_age,
+                                header_right=self._btns_cnt_backlog_age,
+                                reading_guide="Rising median means backlog is aging. Prune or prioritise stale items.",
                             ),
                             expand=1,
                             height=340,
@@ -398,7 +487,7 @@ class HealthPage:
                     [
                         ft.Container(
                             content=self._panel(
-                                "Stale WIP (started > 5d)",
+                                f"Stale WIP (started > {settings.STALE_WIP_DAYS}d)",
                                 self._stale_wip_recents(stale_cards),
                                 badge=self._stale_badge(stale_cards),
                                 scrollable=True,
@@ -422,7 +511,7 @@ class HealthPage:
                         ),
                         ft.Container(
                             content=self._panel(
-                                "Aged Backlog (> 1.5× median)",
+                                f"Aged Backlog (> {settings.AGED_BACKLOG_MULTIPLIER}× median)",
                                 self._aged_backlog_recents(aged_backlog_cards),
                                 badge=self._aged_backlog_badge(aged_backlog_cards),
                                 scrollable=True,
@@ -457,7 +546,7 @@ class HealthPage:
                                 wip_comp["by_priority"],
                                 _PRI_COLORS,
                                 wip_comp["total"],
-                                self._wip_pri_flag(wip_comp),
+                                self._wip_pri_flag(wip_comp, backlog_comp),
                             ),
                             expand=True,
                             height=280,
@@ -637,7 +726,7 @@ class HealthPage:
                             width=CELL, height=CELL,
                             bgcolor=color_for(count, future),
                             border_radius=2,
-                            tooltip=f"{day.strftime('%b %d, %Y')}: {count} movement{'s' if count != 1 else ''}",
+                            tooltip=_tip(f"{day.strftime('%b %d, %Y')}: {count} movement{'s' if count != 1 else ''}"),
                         )
                     )
                 else:
@@ -717,7 +806,8 @@ class HealthPage:
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
-            tooltip=f"In Progress: {in_progress}  ·  Review: {review}",
+            height=140,
+            tooltip=_tip(f"In Progress: {in_progress}  │  Review: {review}\n⚠ Watch: >{settings.HEALTH_WIP_WATCH}  │  Bad: >{settings.HEALTH_WIP_BAD}"),
         )
         return card
 
@@ -770,7 +860,8 @@ class HealthPage:
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
-            tooltip=f"Blocked tasks: {blocked_tasks}",
+            height=140,
+            tooltip=_tip(f"Blocked tasks: {blocked_tasks}\n⚠ Watch: ≥{settings.HEALTH_BLOCKER_WATCH}  │  Bad: ≥{settings.HEALTH_BLOCKER_BAD}"),
         )
         return card
 
@@ -812,7 +903,10 @@ class HealthPage:
                         color=value_color,
                         font_family="monospace",
                     ),
-                    ft.Text("upcoming deadlines", size=11, color=_TEXT_MUT),
+                    ft.Text(
+                        f"≤1d: {due_1d}  ·  2–3d: {due_3d - due_1d}",
+                        size=11, color=_TEXT_MUT,
+                    ),
                 ],
                 spacing=4,
                 tight=True,
@@ -823,7 +917,8 @@ class HealthPage:
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
-            tooltip=f"Due in 1d: {due_1d}  ·  Due in 3d: {due_3d}",
+            height=140,
+            tooltip=_tip(f"Due ≤1d: {due_1d}  ·  Due 2–3d: {due_3d - due_1d}\n⚠ Watch: ≥{settings.HEALTH_DUE_WATCH} in 3d  │  Bad: ≥{settings.HEALTH_DUE_BAD} in 3d or any ≤1d"),
         )
         return card
 
@@ -838,12 +933,12 @@ class HealthPage:
 
         val_str = f"{median:.0f}d" if median is not None else "—"
 
-        # band: >5d watch, >10d bad
+        # band: >WATCH_DAYS watch, >BAD_DAYS bad
         if median is None:
             band = "good"
-        elif median > 10:
+        elif median > settings.HEALTH_WIP_AGE_BAD_DAYS:
             band = "bad"
-        elif median > 5:
+        elif median > settings.HEALTH_WIP_AGE_WATCH_DAYS:
             band = "watch"
         else:
             band = "good"
@@ -862,7 +957,8 @@ class HealthPage:
             tooltip_parts.append(f"Avg: {avg:.1f}d")
         if mx is not None:
             tooltip_parts.append(f"Max: {mx:.1f}d")
-        tooltip_msg = "  ·  ".join(tooltip_parts) if tooltip_parts else "No WIP cards"
+        tooltip_msg = "  │  ".join(tooltip_parts) if tooltip_parts else "No WIP cards"
+        tooltip_msg += f"\n⚠ Watch: >{settings.HEALTH_WIP_AGE_WATCH_DAYS:.0f}d  │  Bad: >{settings.HEALTH_WIP_AGE_BAD_DAYS:.0f}d"
 
         card = ft.Container(
             content=ft.Column(
@@ -897,7 +993,8 @@ class HealthPage:
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
-            tooltip=tooltip_msg,
+            height=140,
+            tooltip=_tip(tooltip_msg),
         )
         return card
 
@@ -914,9 +1011,9 @@ class HealthPage:
 
         if median is None:
             band = "good"
-        elif median > 7:
+        elif median >= settings.HEALTH_CYCLE_TIME_BAD_DAYS:
             band = "bad"
-        elif median > 3:
+        elif median >= settings.HEALTH_CYCLE_TIME_WATCH_DAYS:
             band = "watch"
         else:
             band = "good"
@@ -963,10 +1060,12 @@ class HealthPage:
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
-            tooltip=(
-                f"P25: {p25:.1f}d  ·  P75: {p75:.1f}d"
+            height=140,
+            tooltip=_tip(
+                (f"P25: {p25:.1f}d  ·  P75: {p75:.1f}d"
                 if p25 is not None and p75 is not None
-                else "No completions in 7d"
+                else "No completions in 7d")
+                + f"\n⚠ Watch: ≥{settings.HEALTH_CYCLE_TIME_WATCH_DAYS:.0f}d  │  Bad: ≥{settings.HEALTH_CYCLE_TIME_BAD_DAYS:.0f}d"
             ),
         )
         return card
@@ -980,12 +1079,12 @@ class HealthPage:
         """Throughput 7d stat card (completed / started)."""
         val_str = f"{tp7:.2f}" if tp7 is not None else "—"
 
-        # band mirrors existing kpi_bands["tp7"] thresholds
+        # band mirrors settings.HEALTH_THROUGHPUT_* thresholds
         if tp7 is None:
             band = "good"
-        elif tp7 < 0.4:
+        elif tp7 < settings.HEALTH_THROUGHPUT_BAD:
             band = "bad"
-        elif tp7 < 0.6:
+        elif tp7 < settings.HEALTH_THROUGHPUT_WATCH:
             band = "watch"
         else:
             band = "good"
@@ -1032,7 +1131,8 @@ class HealthPage:
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
-            tooltip=f"Completed: {completed}  ·  Started: {started}",
+            height=140,
+            tooltip=_tip(f"Completed: {completed}  │  Started: {started}\n⚠ Watch: <{settings.HEALTH_THROUGHPUT_WATCH}  │  Bad: <{settings.HEALTH_THROUGHPUT_BAD}"),
         )
         return card
 
@@ -1048,9 +1148,9 @@ class HealthPage:
 
         if median is None:
             band = "good"
-        elif median > 14:
+        elif median > settings.HEALTH_BACKLOG_AGE_BAD_DAYS:
             band = "bad"
-        elif median > 7:
+        elif median > settings.HEALTH_BACKLOG_AGE_WATCH_DAYS:
             band = "watch"
         else:
             band = "good"
@@ -1065,9 +1165,10 @@ class HealthPage:
         bs = ft.BorderSide(1, border_color)
 
         tooltip_msg = (
-            f"{outliers} card{'s' if outliers != 1 else ''} > 1.5× median"
+            f"{outliers} card{'s' if outliers != 1 else ''} > {settings.AGED_BACKLOG_MULTIPLIER}× median"
             if median is not None else "No backlog cards"
         )
+        tooltip_msg += f"\n⚠ Watch: >{settings.HEALTH_BACKLOG_AGE_WATCH_DAYS:.0f}d  │  Bad: >{settings.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f}d"
 
         card = ft.Container(
             content=ft.Column(
@@ -1102,7 +1203,8 @@ class HealthPage:
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
-            tooltip=tooltip_msg,
+            height=140,
+            tooltip=_tip(tooltip_msg),
         )
         return card
 
@@ -1117,9 +1219,9 @@ class HealthPage:
 
         if ratio is None:
             band = "good"
-        elif ratio < 0.3:
+        elif ratio < settings.HEALTH_PULL_RATE_BAD:
             band = "bad"
-        elif ratio < 0.5:
+        elif ratio < settings.HEALTH_PULL_RATE_WATCH:
             band = "watch"
         else:
             band = "good"
@@ -1166,7 +1268,8 @@ class HealthPage:
             border_radius=8,
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
-            tooltip=f"Started: {started}  ·  Created: {created}",
+            height=140,
+            tooltip=_tip(f"Started: {started}  │  Created: {created}\n⚠ Watch: <{settings.HEALTH_PULL_RATE_WATCH}  │  Bad: <{settings.HEALTH_PULL_RATE_BAD}"),
         )
         return card
 
@@ -1236,6 +1339,116 @@ class HealthPage:
             padding=ft.Padding(14, 14, 14, 14),
         )
 
+    # ── Range selector helper ─────────────────────────────────────────────────
+
+    def _range_btn_row(self, options: list[int], current: int, on_change) -> ft.Row:
+        """Compact toggle button group for selecting a chart time range."""
+        btns: list[ft.Control] = []
+        for days in options:
+            selected = days == current
+            btns.append(
+                ft.Container(
+                    content=ft.Text(
+                        f"{days}d", size=10,
+                        color=_TEXT if selected else _TEXT_MUT,
+                        weight=ft.FontWeight.W_600 if selected else ft.FontWeight.NORMAL,
+                    ),
+                    bgcolor=_BORDER if selected else "transparent",
+                    border_radius=4,
+                    padding=ft.Padding(8, 2, 8, 2),
+                    on_click=lambda e, d=days: on_change(d),
+                    ink=True,
+                )
+            )
+        return ft.Row(btns, spacing=3, tight=True,
+                      vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+    # ── Per-chart range setters ───────────────────────────────────────────────
+
+    def _set_range_pull_rate(self, days: int) -> None:
+        self._range_pull_rate = days
+        data = sqlite_cache.daily_pull_rate(days, epic=self._selected_epic)
+        if self._chart_cnt_pull_rate:
+            self._chart_cnt_pull_rate.content = self._chart_pull_rate(data)
+        if self._btns_cnt_pull_rate:
+            self._btns_cnt_pull_rate.content = self._range_btn_row(
+                [14, 28, 60], days, self._set_range_pull_rate
+            )
+        try:
+            self._page.update()
+        except Exception:
+            pass
+
+    def _set_range_tp_wip(self, days: int) -> None:
+        self._range_tp_wip = days
+        data = sqlite_cache.daily_throughput_wip(days, epic=self._selected_epic)
+        if self._chart_cnt_tp_wip:
+            self._chart_cnt_tp_wip.content = self._chart_throughput_wip(data)
+        if self._btns_cnt_tp_wip:
+            self._btns_cnt_tp_wip.content = self._range_btn_row(
+                [14, 28, 60], days, self._set_range_tp_wip
+            )
+        try:
+            self._page.update()
+        except Exception:
+            pass
+
+    def _set_range_ct_trend(self, days: int) -> None:
+        self._range_ct_trend = days
+        data = sqlite_cache.cycle_time_rolling(days, window=14, epic=self._selected_epic)
+        if self._chart_cnt_ct_trend:
+            self._chart_cnt_ct_trend.content = self._chart_ct_weekly_trend_mpl(data)
+        if self._btns_cnt_ct_trend:
+            self._btns_cnt_ct_trend.content = self._range_btn_row(
+                [14, 28, 60], days, self._set_range_ct_trend
+            )
+        try:
+            self._page.update()
+        except Exception:
+            pass
+
+    def _set_range_ct_hist(self, days: int) -> None:
+        self._range_ct_hist = days
+        data = sqlite_cache.cycle_time_histogram(days, epic=self._selected_epic)
+        if self._chart_cnt_ct_hist:
+            self._chart_cnt_ct_hist.content = self._chart_ct_histogram_mpl(data)
+        if self._btns_cnt_ct_hist:
+            self._btns_cnt_ct_hist.content = self._range_btn_row(
+                [14, 28, 60], days, self._set_range_ct_hist
+            )
+        try:
+            self._page.update()
+        except Exception:
+            pass
+
+    def _set_range_cfd(self, days: int) -> None:
+        self._range_cfd = days
+        data = sqlite_cache.cfd_data(days, epic=self._selected_epic)
+        if self._chart_cnt_cfd:
+            self._chart_cnt_cfd.content = self._chart_cfd_mpl(data)
+        if self._btns_cnt_cfd:
+            self._btns_cnt_cfd.content = self._range_btn_row(
+                [30, 60, 90], days, self._set_range_cfd
+            )
+        try:
+            self._page.update()
+        except Exception:
+            pass
+
+    def _set_range_backlog_age(self, days: int) -> None:
+        self._range_backlog_age = days
+        data = sqlite_cache.backlog_aging_timeseries(days, epic=self._selected_epic)
+        if self._chart_cnt_backlog_age:
+            self._chart_cnt_backlog_age.content = self._chart_backlog_aging_mpl(data)
+        if self._btns_cnt_backlog_age:
+            self._btns_cnt_backlog_age.content = self._range_btn_row(
+                [14, 28, 60], days, self._set_range_backlog_age
+            )
+        try:
+            self._page.update()
+        except Exception:
+            pass
+
     # ── Panel wrapper ─────────────────────────────────────────────────────────
 
     def _panel(
@@ -1245,11 +1458,16 @@ class HealthPage:
         badge: tuple[str, str] | None = None,
         scrollable: bool = False,
         expand_content: bool = False,
+        header_right: ft.Control | None = None,
+        reading_guide: str | None = None,
     ) -> ft.Container:
-        if badge:
+        # Right-side header control: header_right takes precedence over badge
+        if header_right is not None:
+            right_widget: ft.Control = header_right
+        elif badge:
             badge_text, badge_band = badge
             badge_color = _BAND_COLOR.get(badge_band, _CYAN)
-            badge_widget: ft.Control = ft.Container(
+            right_widget = ft.Container(
                 content=ft.Text(
                     badge_text, size=10, weight=ft.FontWeight.W_600,
                     color=badge_color,
@@ -1259,7 +1477,34 @@ class HealthPage:
                 padding=ft.Padding(8, 3, 8, 3),
             )
         else:
-            badge_widget = ft.Container()
+            right_widget = ft.Container()
+
+        # Title with optional reading-guide info icon
+        if reading_guide:
+            title_widget: ft.Control = ft.Row(
+                [
+                    ft.Text(
+                        title.upper(), size=10,
+                        weight=ft.FontWeight.W_600,
+                        color=_TEXT_MUT,
+                    ),
+                    ft.Icon(
+                        ft.Icons.INFO_OUTLINE,
+                        size=12,
+                        color=_TEXT_DIM,
+                        tooltip=_tip(reading_guide),
+                    ),
+                ],
+                spacing=4,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                tight=True,
+            )
+        else:
+            title_widget = ft.Text(
+                title.upper(), size=10,
+                weight=ft.FontWeight.W_600,
+                color=_TEXT_MUT,
+            )
 
         bs = ft.BorderSide(1, _BORDER)
         return ft.Container(
@@ -1268,12 +1513,8 @@ class HealthPage:
                     ft.Container(
                         content=ft.Row(
                             [
-                                ft.Text(
-                                    title.upper(), size=10,
-                                    weight=ft.FontWeight.W_600,
-                                    color=_TEXT_MUT,
-                                ),
-                                badge_widget,
+                                title_widget,
+                                right_widget,
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1300,12 +1541,13 @@ class HealthPage:
     # ── Stale WIP list ────────────────────────────────────────────────────────
 
     def _stale_badge(self, cards: list[dict]) -> tuple[str, str] | None:
-        """Badge based on days_started (new stale_wip_cards_started schema)."""
-        critical = sum(1 for c in cards if c.get("days_started", 0) > 10)
+        """Badge based on days_started: bad if any > BAD_DAYS, watch if any > WATCH_DAYS."""
+        critical = sum(1 for c in cards if c.get("days_started", 0) > settings.STALE_WIP_BAD_DAYS)
+        warn     = sum(1 for c in cards if c.get("days_started", 0) > settings.STALE_WIP_WATCH_DAYS)
         if critical:
             return (str(critical), "bad")
-        if cards:
-            return (str(len(cards)), "watch")
+        if warn:
+            return (str(warn), "watch")
         return ("0", "good")
 
     def _stale_wip_recents(self, cards: list[dict]) -> ft.Control:
@@ -1316,7 +1558,7 @@ class HealthPage:
             cards,
             age_label_fn=lambda c: (
                 f"{c['days_started']}d started",
-                _RED if c["days_started"] > 10 else _AMBER,
+                _RED if c["days_started"] > settings.STALE_WIP_BAD_DAYS else _AMBER,
             ),
         )
 
@@ -1448,14 +1690,14 @@ class HealthPage:
         return (str(n), band)
 
     def _aged_backlog_recents(self, cards: list[dict]) -> ft.Control:
-        """Recents-style list for backlog cards older than 1.5× median."""
+        f"""Recents-style list for backlog cards older than {settings.AGED_BACKLOG_MULTIPLIER}× median."""
         if not cards:
             return ft.Text("No aged outliers", size=12, color=_TEXT_MUT)
         return self._recents_list(
             cards,
             age_label_fn=lambda c: (
                 f"{c['days_old']:.0f}d old",
-                _RED if c["days_old"] > 30 else _AMBER,
+                _AMBER,
             ),
         )
 
@@ -1518,16 +1760,25 @@ class HealthPage:
             return (f"⚠ bugfix {pct:.0f}%", "bad")
         return None
 
-    def _wip_pri_flag(self, comp: dict) -> tuple[str, str] | None:
-        total = comp["total"]
-        if total == 0:
+    def _wip_pri_flag(self, wip_comp: dict, backlog_comp: dict) -> tuple[str, str] | None:
+        """C2: priority inversion — WIP has higher med+low proportion than backlog."""
+        wip_total     = wip_comp["total"]
+        backlog_total = backlog_comp["total"]
+        if wip_total == 0 or backlog_total == 0:
             return None
-        med_low = (
-            comp["by_priority"].get("medium", 0)
-            + comp["by_priority"].get("low", 0)
-        ) / total * 100
-        if med_low > 40:
-            return (f"⚠ med+low {med_low:.0f}%", "watch")
+        wip_med_low = (
+            wip_comp["by_priority"].get("medium", 0)
+            + wip_comp["by_priority"].get("low", 0)
+        ) / wip_total
+        bl_med_low = (
+            backlog_comp["by_priority"].get("medium", 0)
+            + backlog_comp["by_priority"].get("low", 0)
+        ) / backlog_total
+        # Only flag when the gap is meaningful (>10pp)
+        if wip_med_low > bl_med_low + 0.10:
+            pct = wip_med_low * 100
+            bl_pct = bl_med_low * 100
+            return (f"⚠ WIP med+low {pct:.0f}% vs backlog {bl_pct:.0f}%", "watch")
         return None
 
     def _comp_type_flag(self, comp: dict) -> tuple[str, str] | None:
@@ -1680,6 +1931,12 @@ class HealthPage:
             ax.fill_between(dates, vals, alpha=0.08, color=_TEAL)
             ax.axhline(y=1.0, color=_TEXT_MUT, linestyle="--", linewidth=1,
                        alpha=0.7, label="Balanced (1.0)")
+            ax.axhline(y=settings.HEALTH_PULL_RATE_WATCH, color=_AMBER, linestyle="--",
+                       linewidth=1, alpha=0.7,
+                       label=f"Watch (< {settings.HEALTH_PULL_RATE_WATCH})")
+            ax.axhline(y=settings.HEALTH_PULL_RATE_BAD, color=_RED, linestyle="--",
+                       linewidth=1, alpha=0.7,
+                       label=f"Bad (< {settings.HEALTH_PULL_RATE_BAD})")
 
             ax.set_ylabel("started ÷ created", fontsize=8, color=_TEXT_MUT)
             ax.tick_params(axis="y", labelsize=8, colors=_TEXT_MUT)
@@ -1756,7 +2013,39 @@ class HealthPage:
             # ── ax1: throughput (left axis) ───────────────────────────────
             ax1.plot(dates, tp_vals, color=_CYAN, linewidth=1.8,  # type: ignore[arg-type]
                      label="Throughput (7d)", zorder=3)
-            ax1.fill_between(dates, tp_vals, alpha=0.08, color=_CYAN)  # type: ignore[arg-type]
+            # Per-date coloured fill — each date's column is green/amber/red
+            # based on that day's throughput value.
+            _TP_W = settings.HEALTH_THROUGHPUT_WATCH
+            _TP_B = settings.HEALTH_THROUGHPUT_BAD
+            _nn   = [not math.isnan(v) for v in tp_vals]
+
+            def _tp_color(v: float) -> str:
+                if v >= _TP_W:  return _GREEN
+                if v >= _TP_B:  return _AMBER
+                return _RED
+
+            # Coloured trapezoid fills that follow the line exactly.
+            # For each consecutive pair of valid points draw a filled polygon;
+            # when the line crosses a threshold boundary split the trapezoid
+            # at that x-intercept so each sub-piece gets its own colour.
+            valid = [(dates[i], tp_vals[i]) for i in range(len(dates)) if _nn[i]]
+            for _k in range(len(valid) - 1):
+                _x0, _y0 = valid[_k]
+                _x1, _y1 = valid[_k + 1]
+                # Find threshold crossings between the two y-values
+                _crossings: list[tuple] = []
+                for _thresh in (_TP_B, _TP_W):
+                    if min(_y0, _y1) < _thresh < max(_y0, _y1):
+                        _t = (_thresh - _y0) / (_y1 - _y0)
+                        _crossings.append((_x0 + (_x1 - _x0) * _t, _thresh))
+                _crossings.sort(key=lambda c: c[0])
+                _pts = [(_x0, _y0)] + _crossings + [(_x1, _y1)]
+                for _m in range(len(_pts) - 1):
+                    _xa, _ya = _pts[_m]
+                    _xb, _yb = _pts[_m + 1]
+                    _color = _tp_color((_ya + _yb) / 2)
+                    ax1.fill([_xa, _xa, _xb, _xb], [0, _ya, _yb, 0],
+                             color=_color, alpha=0.35, zorder=2, lw=0)
             ax1.set_ylabel("Throughput", color=_CYAN, fontsize=8)
             ax1.tick_params(axis="y", labelcolor=_CYAN, labelsize=8)
             tp_max = max((v for v in tp_vals if not math.isnan(v)), default=1.0)
@@ -1777,7 +2066,21 @@ class HealthPage:
             ax2.yaxis.grid(False)
             ax2.xaxis.grid(False)
             max_wip = max(wip_vals) if wip_vals else 10
-            ax2.set_ylim(0, max(max_wip * 1.3, 10))
+            wip_ylim = max(max_wip * 1.3, 10)
+            ax2.set_ylim(0, wip_ylim)
+            # Color WIP y-axis tick labels at threshold values
+            wip_thresh_ticks = sorted({
+                settings.HEALTH_WIP_WATCH, settings.HEALTH_WIP_BAD,
+                *[t for t in ax2.get_yticks() if 0 <= t <= wip_ylim],
+            })
+            ax2.set_yticks(wip_thresh_ticks)
+            for lbl, val in zip(ax2.get_yticklabels(), wip_thresh_ticks):
+                if val >= settings.HEALTH_WIP_BAD:
+                    lbl.set_color(_RED)
+                elif val >= settings.HEALTH_WIP_WATCH:
+                    lbl.set_color(_AMBER)
+                else:
+                    lbl.set_color(_AMBER)
             for spine in ax2.spines.values():
                 spine.set_edgecolor(_BORDER)
 
@@ -2152,11 +2455,18 @@ class HealthPage:
             # Median line
             ax.plot(dates, medians, color=_GRAY, linewidth=2.0,
                     label="Median", zorder=3)
+            # A6 threshold lines
+            ax.axhline(y=settings.HEALTH_BACKLOG_AGE_WATCH_DAYS, color=_AMBER,
+                       linestyle="--", linewidth=1, alpha=0.6,
+                       label=f"Watch (> {settings.HEALTH_BACKLOG_AGE_WATCH_DAYS:.0f}d)")
+            ax.axhline(y=settings.HEALTH_BACKLOG_AGE_BAD_DAYS, color=_RED,
+                       linestyle="--", linewidth=1, alpha=0.6,
+                       label=f"Bad (> {settings.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f}d)")
 
             ax.set_ylabel("Age (days)", fontsize=8, color=_TEXT_MUT)
             ax.tick_params(axis="y", labelsize=8, colors=_TEXT_MUT)
             ymax = max(p75s, default=10.0)
-            ax.set_ylim(0, max(ymax * 1.2, 5.0))
+            ax.set_ylim(0, max(ymax * 1.2, settings.HEALTH_BACKLOG_AGE_BAD_DAYS * 1.3))
             ax.yaxis.grid(True, color=_MPL_GRID, linewidth=0.5, zorder=0)
             ax.set_axisbelow(True)
             for spine in ax.spines.values():
@@ -2248,11 +2558,15 @@ class HealthPage:
             ax.plot(dates, medians, color=_GREEN, linewidth=2.0,
                     label="Median", zorder=3)
 
-            # Reference lines at 3d, 5d, 6d
+            # Threshold lines: 3d target, A4 watch/bad
             ax.axhline(y=3.0, color=_TEXT_MUT, linestyle="--", linewidth=1,
                        alpha=0.5, label="3d target")
-            ax.axhline(y=5.0, color=_AMBER, linestyle="--", linewidth=1, alpha=0.5)
-            ax.axhline(y=6.0, color=_RED, linestyle="--", linewidth=1, alpha=0.5)
+            ax.axhline(y=settings.HEALTH_CYCLE_TIME_WATCH_DAYS, color=_AMBER,
+                       linestyle="--", linewidth=1, alpha=0.6,
+                       label=f"Watch (≥{settings.HEALTH_CYCLE_TIME_WATCH_DAYS:.0f}d)")
+            ax.axhline(y=settings.HEALTH_CYCLE_TIME_BAD_DAYS, color=_RED,
+                       linestyle="--", linewidth=1, alpha=0.6,
+                       label=f"Bad (≥{settings.HEALTH_CYCLE_TIME_BAD_DAYS:.0f}d)")
 
             ax.set_ylabel("Cycle time (days)", fontsize=8, color=_TEXT_MUT)
             ax.tick_params(axis="y", labelsize=8, colors=_TEXT_MUT)

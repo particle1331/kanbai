@@ -49,6 +49,17 @@ class KanbanPage:
             on_click=self._on_new_epic,
         )
 
+        new_card_btn = ft.Container(
+            content=ft.Text("+ New card", size=12, color="#FFFFFF", weight=ft.FontWeight.W_500),
+            bgcolor="#1F6FEB",
+            border_radius=6,
+            height=36,
+            padding=ft.Padding(14, 0, 14, 0),
+            alignment=ft.Alignment(0, 0),
+            ink=True,
+            on_click=lambda e: self._on_new_card("backlog"),
+        )
+
         graph_btn = ft.IconButton(
             icon=ft.Icons.ACCOUNT_TREE_OUTLINED,
             icon_size=18,
@@ -73,6 +84,7 @@ class KanbanPage:
                             self._epic_dropdown,
                             graph_btn,
                             new_btn,
+                            new_card_btn,
                             ft.VerticalDivider(width=1, color="#3E3E42"),
                             ft.Text("Filter:", size=11, color="#6E7681"),
                             self._build_priority_pills(),

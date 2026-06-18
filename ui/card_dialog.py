@@ -5,6 +5,7 @@ from datetime import datetime, date
 
 from board import epics as _epics
 from board import operations
+from board import settings
 from board.models import LANE_LABELS, LANES
 from board.settings import DEFAULT_TAGS
 from board.storage import sqlite_cache as _sc
@@ -25,7 +26,14 @@ def _make_due_field(page: ft.Page, initial: str = "") -> tuple[ft.Row, ft.TextFi
     def _on_pick(e):
         sel = e.control.value
         if sel is not None:
-            due_field.value = sel.strftime("%Y-%m-%d")
+            from datetime import timezone
+            # DatePicker returns UTC midnight; honour the app timezone setting.
+            if sel.tzinfo is None:
+                sel = sel.replace(tzinfo=timezone.utc)
+            if settings.use_local_tz():
+                due_field.value = sel.astimezone().strftime("%Y-%m-%d")
+            else:
+                due_field.value = sel.strftime("%Y-%m-%d")
             page.update()
 
     picker = ft.DatePicker(
@@ -105,12 +113,6 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
             ft.dropdown.Option("medium", "Medium"),
             ft.dropdown.Option("high", "High"),
         ],
-        expand=True,
-    )
-    lane_dd = ft.Dropdown(
-        label="Lane",
-        value=default_lane,
-        options=[ft.dropdown.Option(k, v) for k, v in LANE_LABELS.items()],
         expand=True,
     )
     error_text = ft.Text("", color=ft.Colors.RED_400, size=12)
@@ -294,7 +296,7 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
         try:
             card = operations.create_card(
                 title=title_field.value.strip(),
-                lane=lane_dd.value or "backlog",
+                lane="backlog",
                 description=(desc_field.value or "").strip(),
                 tags=tags,
                 priority=priority_dd.value or "medium",
@@ -352,7 +354,7 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
                     ft.Column(
                         [
                             ft.Container(height=4),
-                            ft.Row([priority_dd, lane_dd], spacing=8),
+                            priority_dd,
                             tags_field,
                             _tag_suggestions(tags_field),
                             assigned_field,

@@ -201,6 +201,20 @@ def unlink_cards(from_number: int, to_number: int, link_type: str) -> dict:
 
 
 @tool("read")
+def project_health(epic: str | None = None) -> dict:
+    """Return overall project health (good/watch/bad) plus the 8 A-series signals. Filter by epic or omit for board-wide."""
+    from board.health import project_health as _ph
+    return _ph(epic=epic)
+
+
+@tool("read")
+def health_model() -> str:
+    """Return the full health model documentation as Markdown — thresholds, definitions, motivations, and design principles."""
+    from board.health_doc import health_model_doc
+    return health_model_doc()
+
+
+@tool("read")
 def get_board_summary(epic: str | None = None) -> dict:
     """Return aggregated analytics: counts by lane/priority, avg age, top tags, CFD (90d), completion heatmap (this year). Filter by epic or omit for board-wide."""
     import datetime
@@ -245,8 +259,6 @@ def vault_store_secret(name: str, value: str) -> dict:
 _DOCS_DIR = Path(__file__).parent.parent / "docs"
 
 _DOC_META: dict[str, str] = {
-    "kanban-principles": "Core Kanban principles, health model, flow signals, and agent guidance this board enforces.",
-    "flow-metrics": "Flow metric definitions (pull rate, throughput), event log schema, analytics queries, and deferred metrics.",
     "mcp": "MCP server setup, available tools, and access tier documentation.",
     "vault": "Encrypted secrets vault usage and security model.",
 }

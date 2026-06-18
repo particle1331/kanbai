@@ -1,14 +1,13 @@
 """board/health.py — signal-based project health computation.
 
-Project health is derived from a set of monitored *signals*, each corresponding
-to a metric the analytics page already warns about.  Every signal maps to one
-of three bands:
+Project health is derived from the 8 A-series stat cards shown on the
+analytics Health page. Every signal maps to one of three bands:
 
   "good"  – within healthy thresholds (green)
   "watch" – approaching a threshold; worth monitoring (amber)
   "bad"   – threshold exceeded; needs attention (red)
 
-The overall health verdict is the worst band across all signals.
+The overall health verdict is the worst band across all 8 signals.
 
 Public API
 ----------
@@ -31,38 +30,11 @@ from board.storage import sqlite_cache
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _ratio_low_band(value: float | None, watch: float, bad: float) -> str:
-    """Band for metrics where a LOW value is bad (inverted scale).
-
-    None (no data) → "good".
-    value < bad    → "bad"
-    value < watch  → "watch"
-    else           → "good"
-    """
-    if value is None:
-        return "good"
-    if value < bad:
+def _due_band(due_3d: int, due_1d: int) -> str:
+    """A8 two-tier banding: bad if due_3d >= DUE_BAD OR due_1d >= 1."""
+    if due_3d >= settings.HEALTH_DUE_BAD or due_1d >= 1:
         return "bad"
-    if value < watch:
-        return "watch"
-    return "good"
-
-
-def _finish_ratio_band(value: float | None) -> str:
-    """Finish ratio is healthy near 1.0 (WIP stable).
-
-    Outside the outer window (bad range) → "bad".
-    Outside the inner window (watch range) → "watch".
-    Inside both → "good".
-    None (no data) → "good".
-    """
-    if value is None:
-        return "good"
-    if (value < settings.HEALTH_FINISH_RATIO_BAD_LOW
-            or value > settings.HEALTH_FINISH_RATIO_BAD_HIGH):
-        return "bad"
-    if (value < settings.HEALTH_FINISH_RATIO_WATCH_LOW
-            or value > settings.HEALTH_FINISH_RATIO_WATCH_HIGH):
+    if due_3d >= settings.HEALTH_DUE_WATCH:
         return "watch"
     return "good"
 
@@ -72,7 +44,7 @@ def _finish_ratio_band(value: float | None) -> str:
 # ---------------------------------------------------------------------------
 
 def compute_signals(epic: str | None = None) -> list[dict]:
-    """Return all monitored health signals for the board (or a specific epic).
+    """Return all 8 monitored health signals (A1–A8) for the board.
 
     Each signal dict contains:
       key     – stable identifier string
@@ -84,178 +56,159 @@ def compute_signals(epic: str | None = None) -> list[dict]:
     """
     signals: list[dict] = []
 
-    # ── Card age signals ──────────────────────────────────────────────────────
-    age_stats = sqlite_cache.open_card_age_stats(epic=epic)
-    avg_age: float | None = age_stats.get("avg_age")
-    max_age: float | None = age_stats.get("max_age")
-    open_count: int = age_stats.get("count", 0)
+    now = dt.datetime.now(dt.timezone.utc)
+
+    # ── A1: Throughput 7d (completed ÷ started) ───────────────────────────────
+    flow_7 = sqlite_cache.transition_flow_counts(
+        (now - dt.timedelta(days=7)).isoformat(), now.isoformat(), epic=epic
+    )
+    started_7  = flow_7.get("started", 0)
+    completed_7 = flow_7.get("completed", 0)
+    tp7: float | None = (completed_7 / started_7) if started_7 > 0 else None
 
     signals.append({
-        "key": "avg_age",
-        "label": "Average card age",
-        "value": avg_age,
-        "unit": "days",
-        "band": settings.band(avg_age, settings.HEALTH_AVG_AGE_WATCH_DAYS, settings.HEALTH_AVG_AGE_BAD_DAYS),
+        "key": "throughput_7d",
+        "label": "Throughput 7d",
+        "value": round(tp7, 2) if tp7 is not None else None,
+        "unit": "ratio",
+        "band": settings.band_inverted(tp7, settings.HEALTH_THROUGHPUT_WATCH, settings.HEALTH_THROUGHPUT_BAD),
         "message": (
-            f"Avg open-card age {avg_age:.0f}d"
-            if avg_age is not None else "No open cards"
+            f"Throughput {tp7:.2f} ({completed_7} completed / {started_7} started)"
+            if tp7 is not None else "No starts in 7d (throughput undefined)"
         ),
     })
 
+    # ── A2: WIP Count (in_progress + review) ─────────────────────────────────
+    by_lane = sqlite_cache.count_cards_by_lane(epic=epic)
+    wip_count = by_lane.get("in_progress", 0) + by_lane.get("review", 0)
+
     signals.append({
-        "key": "max_age",
-        "label": "Oldest card age",
-        "value": max_age,
-        "unit": "days",
-        "band": settings.band(max_age, settings.HEALTH_MAX_AGE_WATCH_DAYS, settings.HEALTH_MAX_AGE_BAD_DAYS),
+        "key": "wip_count",
+        "label": "WIP Count",
+        "value": wip_count,
+        "unit": "cards",
+        "band": settings.band(wip_count, settings.HEALTH_WIP_WATCH, settings.HEALTH_WIP_BAD),
         "message": (
-            f"Oldest open card {max_age:.0f}d"
-            if max_age is not None else "No open cards"
+            f"WIP {wip_count} cards "
+            f"({by_lane.get('in_progress', 0)} in progress + {by_lane.get('review', 0)} review)"
         ),
     })
 
-    # ── Staleness signals (penalise only when open work exists) ───────────────
-    days_since_done: int | None = sqlite_cache.days_since_last_completed(epic=epic)
-    signals.append({
-        "key": "days_since_done",
-        "label": "Days since last completion",
-        "value": days_since_done,
-        "unit": "days",
-        "band": settings.band(
-            days_since_done if open_count > 0 else None,
-            settings.HEALTH_LAST_DONE_WATCH_DAYS,
-            settings.HEALTH_LAST_DONE_BAD_DAYS,
-        ),
-        "message": (
-            "No completions yet" if days_since_done is None
-            else "Last completion today" if days_since_done == 0
-            else f"Last completion {days_since_done}d ago"
-        ),
-    })
+    # ── A3: WIP Median Age (days) ─────────────────────────────────────────────
+    wip_age = sqlite_cache.wip_age_stats(epic=epic)
+    wip_median_age: float | None = wip_age.get("median_age")
 
-    days_since_move: int | None = sqlite_cache.days_since_last_transition(epic=epic)
     signals.append({
-        "key": "days_since_move",
-        "label": "Days since last transition",
-        "value": days_since_move,
+        "key": "wip_median_age",
+        "label": "WIP Median Age",
+        "value": wip_median_age,
         "unit": "days",
         "band": settings.band(
-            days_since_move if open_count > 0 else None,
-            settings.HEALTH_LAST_MOVE_WATCH_DAYS,
-            settings.HEALTH_LAST_MOVE_BAD_DAYS,
+            wip_median_age,
+            settings.HEALTH_WIP_AGE_WATCH_DAYS,
+            settings.HEALTH_WIP_AGE_BAD_DAYS,
         ),
         "message": (
-            "No transitions recorded" if days_since_move is None
-            else "Last transition today" if days_since_move == 0
-            else f"No card movement in {days_since_move}d"
+            f"WIP median age {wip_median_age:.0f}d"
+            if wip_median_age is not None else "No WIP cards"
         ),
     })
 
-    days_since_started: int | None = sqlite_cache.days_since_last_started(epic=epic)
+    # ── A4: Median Cycle Time 7d (days) ──────────────────────────────────────
+    ct_7d = sqlite_cache.median_cycle_time_days(7, epic=epic)
+    median_ct: float | None = ct_7d.get("median")
+
+    # >= triggers for cycle time (plan says ">= 5d watch, >= 6d bad")
+    if median_ct is None:
+        ct_band = "good"
+    elif median_ct >= settings.HEALTH_CYCLE_TIME_BAD_DAYS:
+        ct_band = "bad"
+    elif median_ct >= settings.HEALTH_CYCLE_TIME_WATCH_DAYS:
+        ct_band = "watch"
+    else:
+        ct_band = "good"
+
     signals.append({
-        "key": "days_since_started",
-        "label": "Days since last started",
-        "value": days_since_started,
+        "key": "median_cycle_time",
+        "label": "Median Cycle Time",
+        "value": median_ct,
+        "unit": "days",
+        "band": ct_band,
+        "message": (
+            f"Median cycle time {median_ct:.0f}d (7d window)"
+            if median_ct is not None else "No completions in 7d"
+        ),
+    })
+
+    # ── A5: Pull Rate 7d (started ÷ created) ──────────────────────────────────
+    created_7 = flow_7.get("created", 0)
+    pull_7: float | None = (started_7 / created_7) if created_7 > 0 else None
+
+    signals.append({
+        "key": "pull_rate_7d",
+        "label": "Pull Rate 7d",
+        "value": round(pull_7, 2) if pull_7 is not None else None,
+        "unit": "ratio",
+        "band": settings.band_inverted(pull_7, settings.HEALTH_PULL_RATE_WATCH, settings.HEALTH_PULL_RATE_BAD),
+        "message": (
+            f"Pull rate {pull_7:.2f} ({started_7} started / {created_7} created)"
+            if pull_7 is not None else "No cards created in 7d"
+        ),
+    })
+
+    # ── A6: Median Backlog Age (days) ─────────────────────────────────────────
+    backlog_age = sqlite_cache.backlog_age_stats(epic=epic)
+    backlog_median_age: float | None = backlog_age.get("median_age")
+
+    signals.append({
+        "key": "backlog_median_age",
+        "label": "Median Backlog Age",
+        "value": backlog_median_age,
         "unit": "days",
         "band": settings.band(
-            days_since_started if open_count > 0 else None,
-            settings.HEALTH_LAST_STARTED_WATCH_DAYS,
-            settings.HEALTH_LAST_STARTED_BAD_DAYS,
+            backlog_median_age,
+            settings.HEALTH_BACKLOG_AGE_WATCH_DAYS,
+            settings.HEALTH_BACKLOG_AGE_BAD_DAYS,
         ),
         "message": (
-            "No cards started yet" if days_since_started is None
-            else "Last card started today" if days_since_started == 0
-            else f"No card started in {days_since_started}d"
+            f"Backlog median age {backlog_median_age:.0f}d"
+            if backlog_median_age is not None else "No backlog cards"
         ),
     })
 
-    days_since_created: int | None = sqlite_cache.days_since_last_created(epic=epic)
-    signals.append({
-        "key": "days_since_created",
-        "label": "Days since last created",
-        "value": days_since_created,
-        "unit": "days",
-        "band": settings.band(
-            days_since_created,
-            settings.HEALTH_LAST_CREATED_WATCH_DAYS,
-            settings.HEALTH_LAST_CREATED_BAD_DAYS,
-        ),
-        "message": (
-            "No cards created yet" if days_since_created is None
-            else "Last card created today" if days_since_created == 0
-            else f"No card created in {days_since_created}d"
-        ),
-    })
-
-    # ── Blocker count ─────────────────────────────────────────────────────────
+    # ── A7: Blockers (WIP cards with ≥1 blocks link) ──────────────────────────
     blocker_count = sqlite_cache.count_blocker_cards(epic=epic)
+
     signals.append({
         "key": "blockers",
-        "label": "Active blockers",
+        "label": "Blockers",
         "value": blocker_count,
         "unit": "cards",
         "band": settings.band(
-            blocker_count, settings.HEALTH_BLOCKER_WATCH, settings.HEALTH_BLOCKER_BAD
+            blocker_count,
+            settings.HEALTH_BLOCKER_WATCH,
+            settings.HEALTH_BLOCKER_BAD,
         ),
         "message": (
-            f"{blocker_count} blocking card{'s' if blocker_count != 1 else ''}"
+            f"{blocker_count} WIP card{'s' if blocker_count != 1 else ''} blocking progress"
             if blocker_count else "No blockers"
         ),
     })
 
-    # ── Due-soon count ────────────────────────────────────────────────────────
-    due_soon_count = sqlite_cache.count_due_within(settings.DEADLINE_SOON_DAYS, epic=epic)
+    # ── A8: Due in 3d ─────────────────────────────────────────────────────────
+    due_3d = sqlite_cache.count_due_within(settings.DEADLINE_SOON_DAYS, epic=epic)
+    due_1d = sqlite_cache.count_due_within(settings.DEADLINE_URGENT_DAYS, epic=epic)
+
     signals.append({
-        "key": "due_soon",
-        "label": f"Due within {settings.DEADLINE_SOON_DAYS}d",
-        "value": due_soon_count,
+        "key": "due_3d",
+        "label": f"Due in {settings.DEADLINE_SOON_DAYS}d",
+        "value": due_3d,
         "unit": "cards",
-        "band": settings.band(
-            due_soon_count, settings.HEALTH_DUE_SOON_WATCH, settings.HEALTH_DUE_SOON_BAD
-        ),
+        "band": _due_band(due_3d, due_1d),
         "message": (
-            f"{due_soon_count} card{'s' if due_soon_count != 1 else ''} "
-            f"due within {settings.DEADLINE_SOON_DAYS}d"
-            if due_soon_count else "No upcoming deadlines"
-        ),
-    })
-
-    # ── 28-day flow ratios ────────────────────────────────────────────────────
-    now = dt.datetime.now(dt.timezone.utc)
-    flow = sqlite_cache.transition_flow_counts(
-        (now - dt.timedelta(days=28)).isoformat(), now.isoformat(), epic=epic
-    )
-    created = flow.get("created", 0)
-    started = flow.get("started", 0)
-    completed = flow.get("completed", 0)
-
-    start_ratio: float | None = (started / created) if created > 0 else None
-    signals.append({
-        "key": "start_ratio",
-        "label": "Start ratio (28d)",
-        "value": round(start_ratio, 2) if start_ratio is not None else None,
-        "unit": "ratio",
-        "band": _ratio_low_band(
-            start_ratio,
-            settings.HEALTH_START_RATIO_WATCH,
-            settings.HEALTH_START_RATIO_BAD,
-        ),
-        "message": (
-            f"Start ratio {start_ratio:.2f} ({started} started / {created} created)"
-            if start_ratio is not None else "No flow data (28d)"
-        ),
-    })
-
-    finish_ratio: float | None = (completed / started) if started > 0 else None
-    signals.append({
-        "key": "finish_ratio",
-        "label": "Finish ratio (28d)",
-        "value": round(finish_ratio, 2) if finish_ratio is not None else None,
-        "unit": "ratio",
-        "band": _finish_ratio_band(finish_ratio),
-        "message": (
-            f"Finish ratio {finish_ratio:.2f} ({completed} completed / {started} started)"
-            if finish_ratio is not None else "No flow data (28d)"
+            f"{due_3d} card{'s' if due_3d != 1 else ''} due within {settings.DEADLINE_SOON_DAYS}d"
+            f"{f' ({due_1d} due within {settings.DEADLINE_URGENT_DAYS}d)' if due_1d else ''}"
+            if due_3d else "No upcoming deadlines"
         ),
     })
 
@@ -263,7 +216,7 @@ def compute_signals(epic: str | None = None) -> list[dict]:
 
 
 def project_health(epic: str | None = None) -> dict:
-    """Compute overall project health from all monitored signals.
+    """Compute overall project health from all 8 A-series signals.
 
     Returns a dict with:
       status   – "good" | "watch" | "bad"

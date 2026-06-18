@@ -705,16 +705,25 @@ def recently_completed_cards(n: int = 5, epic: str | None = None) -> list[dict]:
 
 
 def blocker_cards(n: int = 5, epic: str | None = None) -> list[dict]:
-    """Non-archived cards that block at least one other card.
+    """Non-archived WIP cards that block at least one other card.
+
+    Only cards in ``in_progress`` or ``review`` are counted — backlog cards
+    with ``blocks`` links are just tracking future dependencies, not active
+    blockers.
 
     Each returned dict gains a ``block_count`` field (number of outgoing
     ``blocks`` links), sorted by block_count desc then most recently updated.
     """
-    return _link_cards("blocks", "block_count", n, epic)
+    return _link_cards("blocks", "block_count", n, epic,
+                       lanes=("in_progress", "review"))
 
 
 def count_blocker_cards(epic: str | None = None) -> int:
-    """Count non-archived cards that block at least one non-archived card.
+    """Count non-archived WIP cards that block at least one non-archived card.
+
+    Only cards in ``in_progress`` or ``review`` are counted — backlog cards
+    with ``blocks`` links are just tracking future dependencies, not active
+    blockers.
 
     Matches ``blocker_cards`` (a card counts only when it holds at least one
     live ``blocks`` link), but selects just the ``links`` column and skips dict
@@ -727,7 +736,9 @@ def count_blocker_cards(epic: str | None = None) -> int:
         rows = con.execute(
             f"""
             SELECT links FROM cards
-            WHERE archived = 0 AND links LIKE '%"blocks"%'{clause}
+            WHERE archived = 0
+              AND lane IN ('in_progress', 'review')
+              AND links LIKE '%"blocks"%'{clause}
             """,
             params,
         ).fetchall()
@@ -763,22 +774,34 @@ def blocked_cards(n: int = 5, epic: str | None = None) -> list[dict]:
     return _link_cards("blocked_by", "blocked_count", n, epic)
 
 
-def _link_cards(link_type: str, count_field: str, n: int, epic: str | None) -> list[dict]:
+def _link_cards(
+    link_type: str,
+    count_field: str,
+    n: int,
+    epic: str | None,
+    lanes: tuple[str, ...] | None = None,
+) -> list[dict]:
     """Return non-archived cards holding at least one link of *link_type*.
 
-    Only links whose target card is itself non-archived are counted, so the
-    numbers reconcile across the blocker/blocked views. Each returned dict
-    gains *count_field* (number of matching live links), sorted by that count
-    desc then most recently updated.
+    When *lanes* is given, only cards in those lanes are included.  Only links
+    whose target card is itself non-archived are counted, so the numbers
+    reconcile across the blocker/blocked views.  Each returned dict gains
+    *count_field* (number of matching live links), sorted by that count desc
+    then most recently updated.
     """
     clause = " AND epic = ?" if epic is not None else ""
-    params = (epic,) if epic is not None else ()
+    params: list = [epic] if epic is not None else []
+    lane_clause = ""
+    if lanes:
+        placeholders = ", ".join("?" for _ in lanes)
+        lane_clause = f" AND lane IN ({placeholders})"
+        params = list(lanes) + params
     with _conn() as con:
         rows = con.execute(
             f"""
             SELECT id, number, title, updated_at, priority, lane, epic, links
             FROM cards
-            WHERE archived = 0 AND links LIKE '%"{link_type}"%'{clause}
+            WHERE archived = 0{lane_clause} AND links LIKE '%"{link_type}"%'{clause}
             """,
             params,
         ).fetchall()
@@ -1116,19 +1139,35 @@ def backlog_age_stats(epic: str | None = None) -> dict:
 def wip_age_stats(epic: str | None = None) -> dict:
     """Min / median / avg / max age (days) of cards currently in WIP lanes.
 
-    WIP = ``in_progress`` + ``review``. Ages are ``now - created_at``.
+    WIP = ``in_progress`` + ``review``.  Ages are measured from each card's
+    most recent transition **into** ``in_progress`` (i.e. time actually spent
+    in WIP), not from ``created_at``.
+
+    Cards that are in a WIP lane but have no recorded ``in_progress``
+    transition (e.g. moved directly to ``review``) fall back to
+    ``created_at``.
+
     Returns ``{"count", "min_age", "median_age", "avg_age", "max_age"}``;
     age values are ``None`` when there are no WIP cards.
     """
-    clause = " AND epic = ?" if epic is not None else ""
+    clause = " AND c.epic = ?" if epic is not None else ""
     params = (epic,) if epic is not None else ()
     with _conn() as con:
         rows = con.execute(
             f"""
-            SELECT created_at FROM cards
-            WHERE archived = 0
-              AND lane IN ('in_progress', 'review')
-              AND created_at != ''{clause}
+            SELECT
+                c.id,
+                c.created_at,
+                (
+                    SELECT MAX(t.at)
+                    FROM transitions t
+                    WHERE t.card_id = c.id
+                      AND t.to_col = 'in_progress'
+                ) AS started_at
+            FROM cards c
+            WHERE c.archived = 0
+              AND c.lane IN ('in_progress', 'review')
+              AND c.created_at != ''{clause}
             """,
             params,
         ).fetchall()
@@ -1136,7 +1175,9 @@ def wip_age_stats(epic: str | None = None) -> dict:
     now = datetime.now(timezone.utc)
     ages: list[float] = []
     for row in rows:
-        raw = row["created_at"]
+        # Prefer started_at (most recent in_progress transition); fall back
+        # to created_at if no in_progress transition exists.
+        raw = row["started_at"] or row["created_at"]
         try:
             if "T" in raw:
                 dt = datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
@@ -1740,6 +1781,37 @@ def wip_composition(epic: str | None = None) -> dict:
             f"""
             SELECT tags, priority FROM cards
             WHERE archived = 0 AND lane IN ('in_progress', 'review'){clause}
+            """,
+            params,
+        ).fetchall()
+    _VALID_PRI = {"high", "medium", "low"}
+    TYPE_TAGS = {"bugfix", "feature", "enhancement"}
+    by_tag: dict[str, int] = {"bugfix": 0, "feature": 0, "enhancement": 0, "other": 0}
+    by_priority: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+    for r in rows:
+        pri = (r["priority"] or "medium").lower()
+        if pri not in _VALID_PRI:
+            pri = "medium"
+        by_priority[pri] += 1
+        raw = r["tags"] or ""
+        tags = [t.strip() for t in raw.split(",") if t.strip()]
+        tag = next((t for t in tags if t in TYPE_TAGS), None)
+        by_tag[tag if tag else "other"] = by_tag.get(tag if tag else "other", 0) + 1
+    return {"by_tag": by_tag, "by_priority": by_priority, "total": len(rows)}
+
+
+def backlog_composition(epic: str | None = None) -> dict:
+    """Backlog breakdown by tag-type and priority.
+
+    Same structure as wip_composition().
+    """
+    clause = " AND epic = ?" if epic is not None else ""
+    params = (epic,) if epic is not None else ()
+    with _conn() as con:
+        rows = con.execute(
+            f"""
+            SELECT tags, priority FROM cards
+            WHERE archived = 0 AND lane = 'backlog'{clause}
             """,
             params,
         ).fetchall()

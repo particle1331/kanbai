@@ -2,5 +2,9 @@
   "debug-analytics": {
     "archived": false,
     "archived_card_ids": []
+  },
+  "test": {
+    "archived": false,
+    "archived_card_ids": []
   }
 }

@@ -193,85 +193,47 @@ def set_stream_response(value: bool) -> None:
 # "type" dimension: bugfix / feature / enhancement.
 DEFAULT_TAGS: list[str] = ["bugfix", "feature", "enhancement"]
 
-# ── Project health thresholds ──────────────────────────────────────────────────
-# Centralized thresholds for the analytics "Project Health" indicator.
+# ── Project health thresholds (A1–A8 stat cards) ─────────────────────────────
+# Single source of truth consumed by board/health.py and ui/health_page.py.
 #
-# Health is the WORST band across several open-work signals. Each signal maps a
-# value to one of three bands via ``band()``:
-#
-#   value <= watch  → "good"   (green)
-#   value <= bad    → "watch"  (amber)
-#   value >  bad    → "bad"    (red)
-#
-# For ratio metrics (pull rate, throughput), the scale is *inverted*: a lower
-# ratio is worse, so band_inverted() is used.
-#
-# Adjust the threshold pairs below to match your team's rhythm.
+# Each signal maps a value to one of three bands via band() / band_inverted():
+#   good  – within healthy limits (green)
+#   watch – approaching a threshold; worth monitoring (amber)
+#   bad   – threshold exceeded; needs attention (red)
 
-# Average open-task age (days). Open = non-archived, non-done cards.
-HEALTH_AVG_AGE_WATCH_DAYS: float = 14.0
-HEALTH_AVG_AGE_BAD_DAYS: float = 28.0
-
-# Oldest open-task age (days) — the single most stale card.
-HEALTH_MAX_AGE_WATCH_DAYS: float = 56.0
-HEALTH_MAX_AGE_BAD_DAYS: float = 84.0
-
-# Days since the last completion (only counts when open cards exist).
-HEALTH_LAST_DONE_WATCH_DAYS: float = 14.0
-HEALTH_LAST_DONE_BAD_DAYS: float = 28.0
-
-# Days since the last column transition (only counts when open cards exist).
-HEALTH_LAST_MOVE_WATCH_DAYS: float = 7.0
-HEALTH_LAST_MOVE_BAD_DAYS: float = 14.0
-
-# Days since the last card was started (entered in_progress).
-HEALTH_LAST_STARTED_WATCH_DAYS: float = 14.0
-HEALTH_LAST_STARTED_BAD_DAYS: float = 28.0
-
-# Days since the last card was created.
-HEALTH_LAST_CREATED_WATCH_DAYS: float = 56.0
-HEALTH_LAST_CREATED_BAD_DAYS: float = 84.0
-
-# Pull rate (started ÷ created). Lower is worse (backlog growing).
-# Inverted scale: value < watch → watch, value < bad → bad.
-HEALTH_PULL_RATE_WATCH: float = 0.7
-HEALTH_PULL_RATE_BAD: float = 0.4
-
-# Throughput (completed ÷ started). Healthy near 1.0 (WIP stable).
-# Inverted scale: value < watch → watch, value < bad → bad.
-HEALTH_THROUGHPUT_WATCH: float = 0.7
+# A1: Throughput 7d (completed ÷ started) — lower is worse
+HEALTH_THROUGHPUT_WATCH: float = 0.6
 HEALTH_THROUGHPUT_BAD: float = 0.4
 
-# Avg cycle time in days (start → done). Higher = worse.
-# Spec target: every card finishes in 1–3 days. Watch triggers at > 3d,
-# bad at > 5d — consistent with the fixed task-size convention.
-HEALTH_CYCLE_TIME_WATCH_DAYS: float = 3.0
-HEALTH_CYCLE_TIME_BAD_DAYS: float = 5.0
+# A2: WIP Count (in_progress + review) — higher is worse
+HEALTH_WIP_WATCH: int = 6
+HEALTH_WIP_BAD: int = 8
 
-# Active blocker count. Any blocker (>0) is immediately "bad"; there is no
-# watch state for blockers because a blocked card needs attention right away.
-HEALTH_BLOCKER_WATCH: int = 0   # 0 → skip watch; any blocker goes straight to bad
-HEALTH_BLOCKER_BAD: int = 0     # 1+ blockers → bad
+# A3: WIP Median Age (days) — higher is worse
+HEALTH_WIP_AGE_WATCH_DAYS: float = 5.0
+HEALTH_WIP_AGE_BAD_DAYS: float = 8.0
 
-# Cards due within DEADLINE_SOON_DAYS. A handful is a watch; many is bad.
-HEALTH_DUE_SOON_WATCH: int = 0  # 1+ due-soon cards → at least watch
-HEALTH_DUE_SOON_BAD: int = 5    # 5+ → bad
+# A4: Median Cycle Time (days, completed in past 7d) — higher is worse (>= triggers)
+HEALTH_CYCLE_TIME_WATCH_DAYS: float = 5.0
+HEALTH_CYCLE_TIME_BAD_DAYS: float = 6.0
 
-# 28-day start ratio (started ÷ created). Low means the backlog is growing
-# faster than work is being pulled. Inverted scale: lower is worse.
-HEALTH_START_RATIO_WATCH: float = 1.0   # < 1.0 → watch (not draining backlog)
-HEALTH_START_RATIO_BAD: float = 0.5     # < 0.5 → bad
+# A5: Pull Rate 7d (started ÷ created) — lower is worse
+HEALTH_PULL_RATE_WATCH: float = 0.5
+HEALTH_PULL_RATE_BAD: float = 0.2
 
-# 28-day finish ratio (completed ÷ started). Healthy near 1.0 (WIP stable).
-# Band uses a window: outside watch range → watch; outside bad range → bad.
-HEALTH_FINISH_RATIO_WATCH_LOW: float = 0.8
-HEALTH_FINISH_RATIO_WATCH_HIGH: float = 1.25
-HEALTH_FINISH_RATIO_BAD_LOW: float = 0.5
-HEALTH_FINISH_RATIO_BAD_HIGH: float = 2.5
+# A6: Median Backlog Age (days) — higher is worse
+HEALTH_BACKLOG_AGE_WATCH_DAYS: float = 14.0
+HEALTH_BACKLOG_AGE_BAD_DAYS: float = 21.0
 
-# Back-compat aliases (older callers referenced the average-age bands directly).
-HEALTH_AGE_GOOD_DAYS: float = HEALTH_AVG_AGE_WATCH_DAYS
-HEALTH_AGE_WATCH_DAYS: float = HEALTH_AVG_AGE_BAD_DAYS
+# A7: Blockers (WIP cards with ≥1 blocks link) — higher is worse
+HEALTH_BLOCKER_WATCH: int = 2
+HEALTH_BLOCKER_BAD: int = 4
+
+# A8: Due in 3d — two-tier:
+#   watch: due_3d >= HEALTH_DUE_WATCH
+#   bad:   due_3d >= HEALTH_DUE_BAD  OR  due_1d >= 1
+HEALTH_DUE_WATCH: int = 3
+HEALTH_DUE_BAD: int = 5
 
 # Band identifiers → display label + color.
 _HEALTH_LABELS: dict[str, str] = {
@@ -328,45 +290,6 @@ def band_color(band_id: str) -> str:
     return _HEALTH_COLORS.get(band_id, _HEALTH_COLORS["good"])
 
 
-def health_status(avg_age: float) -> tuple[str, str]:
-    """Classify project health from the average open-task age.
-
-    Returns a ``(label, color)`` tuple using the average-age bands above.
-    Kept for back-compat; prefer ``overall_health()`` for the holistic view.
-    """
-    b = band(avg_age, HEALTH_AVG_AGE_WATCH_DAYS, HEALTH_AVG_AGE_BAD_DAYS)
-    return (_HEALTH_LABELS[b], _HEALTH_COLORS[b])
-
-
-def overall_health(
-    avg_age: float | None,
-    max_age: float | None,
-    days_since_done: float | None,
-    days_since_move: float | None,
-    open_count: int,
-) -> tuple[str, str]:
-    """Combine open-work signals into a single ``(label, color)`` health verdict.
-
-    The result is the worst band across:
-      • average open-task age
-      • oldest open-task age
-      • staleness of completions (days since last done) — only when open work exists
-      • staleness of movement (days since last transition) — only when open work exists
-
-    The two staleness signals are ignored when there are no open cards, since a
-    finished/empty board legitimately has no recent activity.
-    """
-    bands = [
-        band(avg_age, HEALTH_AVG_AGE_WATCH_DAYS, HEALTH_AVG_AGE_BAD_DAYS),
-        band(max_age, HEALTH_MAX_AGE_WATCH_DAYS, HEALTH_MAX_AGE_BAD_DAYS),
-    ]
-    if open_count > 0:
-        bands.append(band(days_since_done, HEALTH_LAST_DONE_WATCH_DAYS, HEALTH_LAST_DONE_BAD_DAYS))
-        bands.append(band(days_since_move, HEALTH_LAST_MOVE_WATCH_DAYS, HEALTH_LAST_MOVE_BAD_DAYS))
-    worst = max(bands, key=lambda b: _BAND_RANK[b])
-    return (_HEALTH_LABELS[worst], _HEALTH_COLORS[worst])
-
-
 # ── Deadline threshold ─────────────────────────────────────────────────────────
 # Number of days ahead used by the analytics "Due Soon" stat card. A card counts
 # as "due soon" when its due_date falls on or before today + this many days
@@ -377,4 +300,14 @@ DEADLINE_SOON_DAYS: int = 3
 # used to escalate a card's effective priority and to power the "Due ≤1d" board
 # filter. Overdue cards are included.
 DEADLINE_URGENT_DAYS: int = 1
+
+# Stale WIP: cards in WIP longer than this appear in the stale WIP list.
+STALE_WIP_DAYS: int = 5
+
+# Stale WIP badge: watch when any card > this, bad when any card > STALE_WIP_BAD_DAYS.
+STALE_WIP_WATCH_DAYS: int = 7
+STALE_WIP_BAD_DAYS: int = 10
+
+# Aged backlog: cards with age > this multiplier × median backlog age are outliers.
+AGED_BACKLOG_MULTIPLIER: float = 1.5
 

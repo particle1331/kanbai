@@ -63,13 +63,13 @@ def run_app() -> None:
 
                 def on_updated(cid, col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge()), daemon=True).start()
                 def on_moved(cid, old_col, new_col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge()), daemon=True).start()
                 def on_archived(cid, col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge()), daemon=True).start()
                     _go_back()
 
                 open_edit_dialog(
@@ -254,8 +254,7 @@ def run_app() -> None:
                 kanban.refresh_board()
                 kanban.refresh_epics()
                 table_pg.refresh()
-                graph_pg.refresh()
-                graph_pg.refresh_epics()
+                graph_pg.refresh_epics()  # calls _refresh_graph() internally; no need to also call graph_pg.refresh()
                 _refresh_health_badge()
 
             chat = ChatPanel(page, on_board_change=on_board_change)
@@ -291,12 +290,59 @@ def run_app() -> None:
                 key = NAV_ITEMS[idx][0]
                 _show_view(key)
                 select_by_key[key](_shared_epic["value"])
+                if key == "health":
+                    health_pg.refresh()
                 page.update()
 
             def on_open_settings(_e) -> None:
                 def on_settings_change() -> None:
                     kanban.refresh_board()
                 open_settings_dialog(page, on_change=on_settings_change)
+
+            def _on_open_health_doc(_e) -> None:
+                from board.health_doc import health_model_doc
+                doc_md = health_model_doc()
+                dlg = ft.AlertDialog(
+                    modal=False,
+                    title=ft.Text("Kanban Principles & Health Model", size=16, weight=ft.FontWeight.BOLD),
+                    content=ft.Container(
+                        content=ft.Column(
+                            [ft.Markdown(
+                                doc_md,
+                                selectable=True,
+                                extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                                md_style_sheet=ft.MarkdownStyleSheet(
+                                    block_spacing=4,
+                                    h2_padding=ft.Padding(0, 12, 0, 4),
+                                    h3_padding=ft.Padding(0, 8, 0, 2),
+                                    p_padding=ft.Padding(0, 0, 0, 4),
+                                ),
+                            )],
+                            scroll=ft.ScrollMode.AUTO,
+                            expand=True,
+                            spacing=0,
+                        ),
+                        width=800,
+                        height=560,
+                        padding=ft.Padding(8, 0, 8, 0),
+                    ),
+                    actions=[ft.TextButton("Close", on_click=lambda e: page.pop_dialog())],
+                    actions_alignment=ft.MainAxisAlignment.END,
+                )
+                page.show_dialog(dlg)
+
+            health_doc_button = ft.Container(
+                content=ft.Icon(
+                    ft.Icons.MENU_BOOK_OUTLINED,
+                    size=24,
+                    color="#8B949E",
+                ),
+                padding=ft.Padding(0, 12, 0, 4),
+                on_click=_on_open_health_doc,
+                ink=True,
+                tooltip="Kanban Principles & Health Model",
+                alignment=ft.Alignment.CENTER,
+            )
 
             settings_button = ft.Container(
                 content=ft.Icon(
@@ -326,7 +372,12 @@ def run_app() -> None:
                     )
                     for key, icon, selected_icon, label in NAV_ITEMS
                 ],
-                trailing=settings_button,
+                trailing=ft.Column(
+                    [health_doc_button, settings_button],
+                    spacing=0,
+                    tight=True,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 pin_trailing_to_bottom=True,
                 on_change=on_nav_change,
             )

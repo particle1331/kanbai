@@ -155,9 +155,12 @@ def _due_chip(due_date: str | None, lane: str) -> ft.Control | None:
     elif not done and delta == 0:
         color, icon = "#F85149", ft.Icons.WARNING_AMBER_ROUNDED
         tooltip = f"Due {due_date} — due today"
+    elif not done and delta <= settings.DEADLINE_URGENT_DAYS:
+        color, icon = "#F85149", ft.Icons.WARNING_AMBER_ROUNDED
+        tooltip = f"Due {due_date} — in {delta}d (urgent)"
     elif not done and delta <= settings.DEADLINE_SOON_DAYS:
         color, icon = "#F0A742", ft.Icons.WARNING_AMBER_ROUNDED
-        tooltip = f"Due {due_date} — in {delta}d (act now to stay on the 3-day rule)"
+        tooltip = f"Due {due_date} — in {delta}d (act now)"
     else:
         color, icon = "#8B949E", ft.Icons.EVENT_OUTLINED
         tooltip = f"Due {due_date}"
@@ -538,14 +541,16 @@ def build_board(
                             ),
                             ft.Row(
                                 [
-                                    count_text,
                                     ft.IconButton(
                                         ft.Icons.ADD_CIRCLE_OUTLINE,
                                         icon_size=18,
                                         icon_color=_LANE_COLORS.get(lane_key, "#58A6FF"),
-                                        tooltip=f"New card in {LANE_LABELS[lane_key]}",
-                                        on_click=lambda e, c=lane_key: on_new_card(c),
+                                        tooltip="New card" if lane_key == "backlog" else "",
+                                        on_click=lambda e: on_new_card("backlog") if lane_key == "backlog" else None,
+                                        disabled=lane_key != "backlog",
+                                        opacity=1.0 if lane_key == "backlog" else 0.0,
                                     ),
+                                    count_text,
                                 ],
                                 spacing=2,
                             ),

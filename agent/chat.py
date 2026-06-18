@@ -289,6 +289,21 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_health_model",
+            "description": (
+                "Return the full Kanban health model documentation as Markdown. "
+                "Covers all sections: A-series stat card signals (A1–A8) with exact thresholds, "
+                "chart threshold lines and badge rules (B), pie chart flags (C), "
+                "operational parameters (E), flow event definitions, and design principles. "
+                "Call this whenever you need precise thresholds, definitions, or rationale "
+                "beyond the brief summary in your system prompt."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_board_summary",
             "description": (
                 "Return aggregated analytics data for the board: card counts by lane and priority, "
@@ -312,39 +327,54 @@ _TOOLS = [
     },
 ]
 
-_BASE_PROMPT = (
-    "You are Kanbot, an AI assistant embedded in a personal Kanban board. "
-    "Lanes available: backlog, in_progress, review, done. "
-    "When the user refers to a card by task number (e.g. #26 or 'card 26'), "
-    "always use get_card_by_number to resolve it before taking action. "
-    "Mode capabilities: ASK=read-only; AGENT=read+write (no deletion); "
-    "PLAN=read-only+planning; YOLO=read+write+permanent deletion. "
-    "Only Yolo mode can permanently delete cards.\n\n"
-    "KANBAN PRINCIPLES (mandatory — adhere to these at all times):\n"
-    "1. LIMIT WIP. Flow: backlog → in_progress → review → done. "
-    "   Pull rate = started ÷ created (healthy ≥ 1.0). "
-    "   Throughput = completed ÷ started (healthy ≈ 1.0). "
-    "   If throughput < 1.0, stop creating new cards and unblock what's in flight.\n"
-    "2. NO ESTIMATES. Every card is one unit. Cards must be completable in 3–7 days "
-    "   (target 3 days). If a task is larger, split it into parent_of/child_of cards. "
-    "   Do not use story points or effort estimates.\n"
-    "3. HEALTH SIGNALS. Raise a concern if: oldest open card > 56 days; "
-    "   no completions in > 14 days (with open work); no transitions in > 7 days.\n"
-    "4. BEFORE CREATING CARDS, check board health with get_board_summary. "
-    "   If throughput is low or WIP is high, prefer unblocking over adding new cards.\n"
-    "5. SPLIT BIG TASKS. Use 'parent_of'/'child_of' links for hierarchical decomposition "
-    "   and 'blocks'/'blocked_by' to express sequencing within a task tree.\n"
-    "Full principles and flow-metric definitions are available via get_board_summary "
-    "and the MCP doc tools (list_docs / get_doc).\n\n"
-    "TIMEZONE RULES:\n"
-    "1. All card timestamps (created_at, updated_at) are stored in UTC ISO-8601.\n"
-    "2. Never treat the raw UTC date portion of a timestamp as the user's local date.\n"
-    "3. When the user asks about dates ('today', 'this week', 'yesterday', etc.), "
-    "   call convert_timestamps_to_local with the relevant timestamps before comparing. "
-    "   Use the returned local_date values to determine which cards match.\n"
-    "4. Always use convert_timestamps_to_local for date-relative queries — do not "
-    "   attempt manual UTC offset arithmetic."
-)
+def _build_base_prompt() -> str:
+    """Build the base system prompt using live settings values so health thresholds
+    and Kanban principles always reflect the current configuration."""
+    from board import settings as _s
+    return (
+        "You are Kanbot, an AI assistant embedded in a personal Kanban board. "
+        "Lanes available: backlog, in_progress, review, done. "
+        "When the user refers to a card by task number (e.g. #26 or 'card 26'), "
+        "always use get_card_by_number to resolve it before taking action. "
+        "Mode capabilities: ASK=read-only; AGENT=read+write (no deletion); "
+        "PLAN=read-only+planning; YOLO=read+write+permanent deletion. "
+        "Only Yolo mode can permanently delete cards.\n\n"
+        "KANBAN PRINCIPLES (mandatory — adhere to these at all times):\n"
+        f"P1 — FIXED TASK SIZE. Every card must be completable within 1–{_s.HEALTH_CYCLE_TIME_BAD_DAYS:.0f} days "
+        "(target ~3 days). Do not use story points or effort estimates — every card is one unit. "
+        "If a task is too large, decompose it before starting.\n"
+        "P2 — DECOMPOSE COMPLEX WORK. Break large tasks into smaller cards and use "
+        "'parent_of'/'child_of' links for hierarchy and 'blocks'/'blocked_by' to express "
+        "sequencing. Dependencies must be explicit.\n"
+        f"P3 — NO BACKLOG ROT. Once a card enters the backlog it should be completed or removed "
+        f"within {_s.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f} days. Prune stale items regularly.\n"
+        "P4 — STABLE REQUIREMENTS. If a card's requirements change drastically after entering "
+        "the board, archive it and create a fresh card. Minor edits are fine.\n"
+        "P5 — SPILLOVER IS NORMAL. The 7-day measurement window is fixed. Cards started before "
+        "the window that complete within it count toward throughput — this is expected.\n\n"
+        "HEALTH MODEL — call get_health_model for the full reference (all sections: "
+        "A-series signals A1–A8, chart thresholds B, pie chart flags C, operational parameters E, "
+        "flow event definitions, and design principles). "
+        "Key signals to know by default:\n"
+        f"A1 Throughput 7d (completed÷started): bad < {_s.HEALTH_THROUGHPUT_BAD}. "
+        "If bad, stop creating new cards and unblock what's in flight.\n"
+        f"A2 WIP Count (in_progress + review): bad > {_s.HEALTH_WIP_BAD}.\n"
+        f"A5 Pull Rate 7d (started÷created): bad < {_s.HEALTH_PULL_RATE_BAD}.\n"
+        "For exact watch/bad thresholds on all 8 signals and all other sections, call get_health_model.\n\n"
+        "BEFORE CREATING CARDS: always call get_board_summary first. "
+        "If throughput (A1) is bad or WIP count (A2) is bad, prefer unblocking over adding new work.\n\n"
+        "TIMEZONE RULES:\n"
+        "1. All card timestamps (created_at, updated_at) are stored in UTC ISO-8601.\n"
+        "2. Never treat the raw UTC date portion of a timestamp as the user's local date.\n"
+        "3. When the user asks about dates ('today', 'this week', 'yesterday', etc.), "
+        "call convert_timestamps_to_local with the relevant timestamps before comparing. "
+        "Use the returned local_date values to determine which cards match.\n"
+        "4. Always use convert_timestamps_to_local for date-relative queries — do not "
+        "attempt manual UTC offset arithmetic."
+    )
+
+
+_BASE_PROMPT = _build_base_prompt()
 
 
 def _local_tz_context() -> str:
@@ -363,12 +393,12 @@ def _local_tz_context() -> str:
         f"date for comparison. Today (local) = {local_date}."
     )
 
-_ASK_PROMPT = _BASE_PROMPT + """
+_ASK_PROMPT = _build_base_prompt() + """
 You are in ASK mode (read-only). You may read the board and list secret names to
 answer questions, but you must NOT create, update, move, or archive cards. If the
 user asks you to change the board, tell them to switch to the appropriate mode. Be concise."""
 
-_AGENT_PROMPT = _BASE_PROMPT + """
+_AGENT_PROMPT = _build_base_prompt() + """
 You are in AGENT mode. You can read and modify the board: create, update, move, and
 archive cards. Take direct action with the tools to fulfil the user's requests, then
 briefly confirm what you changed. Be concise and action-oriented.
@@ -378,13 +408,13 @@ If the user asks you to delete a card, archive it instead and explicitly tell th
 "I can't permanently delete cards in Agent mode — I archived it instead. Switch to
 Yolo mode if you want permanent deletion.\""""
 
-_PLAN_PROMPT = _BASE_PROMPT + """
+_PLAN_PROMPT = _build_base_prompt() + """
 You are in PLAN mode (read-only). Your job is to probe with clarifying questions and
 synthesize a clear, structured plan of board changes — but you must NOT modify anything.
 Read the board for context as needed. Once the plan is solid and the user is ready to
 execute, explicitly recommend they switch to Agent mode to carry it out."""
 
-_YOLO_PROMPT = _BASE_PROMPT + """
+_YOLO_PROMPT = _build_base_prompt() + """
 You are in YOLO mode. You have full agent capabilities AND can permanently delete cards
 using delete_card. The user has explicitly authorised irreversible deletions. Take direct
 action, then briefly confirm what you changed. Be concise and action-oriented."""
@@ -392,7 +422,7 @@ action, then briefly confirm what you changed. Be concise and action-oriented.""
 _PROMPTS = {"ask": _ASK_PROMPT, "agent": _AGENT_PROMPT, "plan": _PLAN_PROMPT, "yolo": _YOLO_PROMPT}
 
 # Tools that only read state — available in every mode.
-_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_secret_names", "list_epics", "convert_timestamps_to_local", "get_board_summary"}
+_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_secret_names", "list_epics", "convert_timestamps_to_local", "get_board_summary", "get_health_model"}
 
 _WRITE_TOOL_NAMES = {
     "create_card", "update_card", "move_card", "archive_card",
@@ -554,6 +584,10 @@ def _dispatch_tool(name: str, args: dict) -> str:
             except ValueError as exc:
                 results.append({"utc": ts_str, "error": str(exc)})
         return json.dumps(results)
+
+    if name == "get_health_model":
+        from board.health_doc import health_model_doc
+        return health_model_doc()
 
     if name == "get_board_summary":
         from board.storage import sqlite_cache as _sc
