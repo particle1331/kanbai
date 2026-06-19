@@ -1,7 +1,8 @@
 {
   "debug-analytics": {
     "archived": false,
-    "archived_card_ids": []
+    "archived_card_ids": [],
+    "description": "$f(x) = \\int dx$\n\n**TEST**"
   },
   "test": {
     "archived": false,
