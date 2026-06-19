@@ -22,6 +22,7 @@ class ChatPanel:
         self._model: ModelDef = self._models[0]
         self._busy = False   # guards against re-entrant / double sends
         self._build()
+        threading.Thread(target=agent_chat.warm_up, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Public API
@@ -35,7 +36,8 @@ class ChatPanel:
         self._visible = not self._visible
         self._panel_container.visible = self._visible
         self._fab_container.visible = not self._visible
-        self.page.update()
+        self._panel_container.update()
+        self._fab_container.update()
 
     # ------------------------------------------------------------------
     # Build
@@ -291,14 +293,12 @@ class ChatPanel:
         )
         if is_user:
             self._msg_list.controls.append(bubble)
-            self.page.update()
             return bubble
         bubble.tooltip = ft.Tooltip(message="", prefer_below=True, wait_duration=400)
         self._msg_list.controls.append(bubble)
-        self.page.update()
         return bubble
 
-    def _set_busy(self, busy: bool) -> None:
+    def _set_busy(self, busy: bool, _update: bool = True) -> None:
         self._input.disabled = busy
         self._send_btn.disabled = busy
         if busy:
@@ -308,12 +308,26 @@ class ChatPanel:
             self._status_text.value = "Thinking\u2026"
             self._elapsed_text.value = "0s"
             self._typing_bubble.visible = True
-            self.page.update()
+            if _update:
+                self._panel_container.update()
             threading.Thread(target=self._animate_dots, daemon=True).start()
         else:
             self._typing_stop.set()
             self._typing_bubble.visible = False
+            if _update:
+                self._panel_container.update()
+
+    def _deferred_page_refresh(self) -> None:
+        """Run board-change callback + page.update() off the critical path."""
+        try:
+            if self._on_board_change:
+                self._on_board_change()
+        except Exception:
+            pass
+        try:
             self.page.update()
+        except Exception:
+            pass
 
     def _set_status(self, text: str) -> None:
         self._status_text.value = text
@@ -348,109 +362,129 @@ class ChatPanel:
             return
         self._busy = True
         self._input.value = ""
-        self._set_busy(True)
-        self._add_bubble("user", text)
+        self._input.disabled = True
+        self._send_btn.disabled = True
         self._messages.append({"role": "user", "content": text})
+        # Spawn immediately — don't block the Flet event loop.
+        # All UI updates happen from the background thread via the send queue.
+        threading.Thread(target=self._do_send, args=(text,), daemon=True).start()
 
-        def _run() -> None:
-            try:
-                _settings.reload()
-                # Per-turn streaming state
-                # We stream into a plain ft.Text (no markdown parsing per token)
-                # and swap it for ft.Markdown on the final flush.
-                stream_txt: ft.Text | None = None
-                stream_bubble: ft.Container | None = None
-                stream_text = ""
-                last_ui_t = [0.0]
+    def _do_send(self, text: str) -> None:
+        # Phase 1: Instant visual feedback with lightweight controls only.
+        # Updating input + send_btn + typing_bubble is cheap (no children to diff).
+        # This gives immediate feedback that the message was received.
+        self._tool_call_log = []
+        self._typing_stop.clear()
+        self._start_time = time.time()
+        self._status_text.value = "Thinking\u2026"
+        self._elapsed_text.value = "0s"
+        self._typing_bubble.visible = True
+        self.page.update(self._input, self._send_btn, self._typing_bubble)
 
-                def _on_token(token: str) -> None:
-                    nonlocal stream_txt, stream_bubble, stream_text
-                    stream_text += token
-                    if stream_txt is None:
-                        self._set_status("Typing\u2026")
-                        stream_txt, stream_bubble = self._start_streaming_bubble()
-                    stream_txt.value = stream_text
-                    now = time.time()
-                    if now - last_ui_t[0] >= 0.12:
-                        last_ui_t[0] = now
-                        try:
-                            # Only repaint the message list — not the whole page.
-                            self._msg_list.update()
-                        except Exception:
-                            pass
+        # Phase 2: Add user bubble and update msg_list (heavier due to child diff).
+        # This happens after the instant feedback is already sent to the client.
+        self._add_bubble("user", text)
+        self._msg_list.update()
+        threading.Thread(target=self._animate_dots, daemon=True).start()
 
-                _WRITE_NAMES = {
-                    "create_card", "update_card", "move_card", "archive_card",
-                    "unarchive_card", "delete_card", "set_card_epic",
-                    "create_epic", "archive_epic", "unarchive_epic",
-                    "link_cards", "unlink_cards",
-                }
-                base_board_refresh = self._on_board_change
+        try:
+            _settings.reload()
+            # Per-turn streaming state
+            # We stream into a plain ft.Text (no markdown parsing per token)
+            # and swap it for ft.Markdown on the final flush.
+            stream_txt: ft.Text | None = None
+            stream_bubble: ft.Container | None = None
+            stream_text = ""
+            last_ui_t = [0.0]
 
-                def _on_tool_call(name: str, args: dict) -> None:
-                    self._tool_call_log.append({"name": name, "args": args})
-                    self._set_status("Executing\u2026")
-                    if name in _WRITE_NAMES and base_board_refresh:
-                        # Run in a background thread so it doesn't block the
-                        # agent loop — board UI updates are nice-to-have during
-                        # execution, not on the critical path.
-                        threading.Thread(target=base_board_refresh, daemon=True).start()
+            def _on_token(token: str) -> None:
+                nonlocal stream_txt, stream_bubble, stream_text
+                stream_text += token
+                if stream_txt is None:
+                    self._set_status("Typing\u2026")
+                    stream_txt, stream_bubble = self._start_streaming_bubble()
+                stream_txt.value = stream_text
+                now = time.time()
+                if now - last_ui_t[0] >= 0.12:
+                    last_ui_t[0] = now
+                    try:
+                        self._msg_list.update()
+                    except Exception:
+                        pass
 
-                reply, updated, meta = agent_chat.chat(
-                    self._messages, mode=self._mode, model=self._model,
-                    on_token=_on_token,
-                    on_tool_call=_on_tool_call,
-                    reasoning_effort=_settings.reasoning_effort(),
-                    max_completion_tokens=_settings.max_completion_tokens(),
-                    stream=_settings.stream_response(),
-                    max_steps=_settings.max_agent_steps(),
+            _WRITE_NAMES = {
+                "create_card", "update_card", "move_card", "archive_card",
+                "unarchive_card", "delete_card", "set_card_epic",
+                "create_epic", "archive_epic", "unarchive_epic",
+                "link_cards", "unlink_cards",
+            }
+            base_board_refresh = self._on_board_change
+
+            def _on_tool_call(name: str, args: dict) -> None:
+                self._tool_call_log.append({"name": name, "args": args})
+                self._set_status("Executing\u2026")
+                if name in _WRITE_NAMES and base_board_refresh:
+                    threading.Thread(target=base_board_refresh, daemon=True).start()
+
+            reply, updated, meta = agent_chat.chat(
+                self._messages, mode=self._mode, model=self._model,
+                on_token=_on_token,
+                on_tool_call=_on_tool_call,
+                reasoning_effort=_settings.reasoning_effort(),
+                max_completion_tokens=_settings.max_completion_tokens(),
+                stream=_settings.stream_response(),
+                max_steps=_settings.max_agent_steps(),
+            )
+            self._messages = [
+                m for m in updated if m.get("role") in ("user", "assistant")
+            ]
+            # Final flush — replace streaming ft.Text with rendered ft.Markdown.
+            if stream_txt is not None and stream_bubble is not None:
+                final_md = ft.Markdown(
+                    stream_text,
+                    selectable=True,
+                    extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                    code_theme=ft.MarkdownCodeTheme.ATOM_ONE_DARK,
                 )
-                self._messages = [
-                    m for m in updated if m.get("role") in ("user", "assistant")
-                ]
-                # Final flush — replace streaming ft.Text with rendered ft.Markdown,
-                # then do a single full page.update() to repaint everything at once.
-                if stream_txt is not None and stream_bubble is not None:
-                    final_md = ft.Markdown(
-                        stream_text,
-                        selectable=True,
-                        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
-                        code_theme=ft.MarkdownCodeTheme.ATOM_ONE_DARK,
-                    )
-                    stream_bubble.content = final_md
-                    try:
-                        self.page.update()
-                    except Exception:
-                        pass
-                elif reply:
-                    stream_bubble = self._add_bubble("assistant", reply)
-                # Tool call log bubble goes after the reply bubble
-                if self._tool_call_log:
-                    self._add_tool_log_bubble(list(self._tool_call_log))
-                # Truncation warning
-                if meta.get("finish_reason") == "length":
-                    self._add_truncation_warning()
-                # Token breakdown tooltip on the reply bubble
-                if stream_bubble is not None:
-                    stream_bubble.tooltip = ft.Tooltip(
-                        message=self._token_tooltip_text(meta),
-                        prefer_below=True,
-                        wait_duration=400,
-                    )
-                    try:
-                        self.page.update()
-                    except Exception:
-                        pass
-                self._update_ctx(meta)
-                if meta.get("board_changed") and self._on_board_change:
-                    self._on_board_change()
-            except Exception as ex:
-                self._add_bubble("assistant", f"\u26a0 {ex}")
-            finally:
-                self._busy = False
-                self._set_busy(False)
-
-        threading.Thread(target=_run, daemon=True).start()
+                stream_bubble.content = final_md
+                try:
+                    self._panel_container.update()
+                except Exception:
+                    pass
+            elif reply:
+                stream_bubble = self._add_bubble("assistant", reply)
+            # Tool call log bubble goes after the reply bubble
+            if self._tool_call_log:
+                self._add_tool_log_bubble(list(self._tool_call_log))
+            # Truncation warning
+            if meta.get("finish_reason") == "length":
+                self._add_truncation_warning()
+            # Token breakdown tooltip on the reply bubble
+            if stream_bubble is not None:
+                stream_bubble.tooltip = ft.Tooltip(
+                    message=self._token_tooltip_text(meta),
+                    prefer_below=True,
+                    wait_duration=400,
+                )
+                try:
+                    self._panel_container.update()
+                except Exception:
+                    pass
+            self._update_ctx(meta)
+        except Exception as ex:
+            self._add_bubble("assistant", f"\u26a0 {ex}")
+        finally:
+            self._busy = False
+            self._set_busy(False)
+            # Non-blocking full page refresh so the board reflects any
+            # agent changes without stalling the chat panel.
+            board_dirty = False
+            try:
+                board_dirty = meta.get("board_changed", False)
+            except Exception:
+                pass
+            if board_dirty and self._on_board_change:
+                threading.Thread(target=self._deferred_page_refresh, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Mode / model / context controls
@@ -459,7 +493,7 @@ class ChatPanel:
     def _set_mode(self, mode: str) -> None:
         self._mode = mode
         self._render_mode_pills()
-        self.page.update()
+        self._panel_container.update()
 
     def _render_mode_pills(self) -> None:
         for key, pill in self._mode_pills.items():
@@ -472,13 +506,9 @@ class ChatPanel:
                 pill.content.color = "#58A6FF" if active else "#8B949E"
 
     def _toggle_yolo(self, e=None) -> None:
-        self._yolo = not self._yolo
-        self._render_yolo_pill()
-        self.page.update()
-
-    def _render_yolo_pill(self) -> None:
-        self._yolo_pill.bgcolor = "#4A1F1F" if self._yolo else None
-        self._yolo_pill.content.color = "#F07878" if self._yolo else "#8B949E"
+        self._mode = "yolo" if self._mode != "yolo" else "agent"
+        self._render_mode_pills()
+        self._panel_container.update()
 
     def _on_model_change(self, e) -> None:
         self._model = find_model(self._model_dd.value or self._models[0].handle, self._models)
@@ -495,7 +525,10 @@ class ChatPanel:
             self._ctx_text.color = "#D29922"
         else:
             self._ctx_text.color = "#8B949E"
-        self.page.update()
+        try:
+            self._panel_container.update()
+        except Exception:
+            pass
 
     def _add_truncation_warning(self) -> None:
         """Append a red warning note when the response was cut off by the token limit."""
@@ -524,7 +557,7 @@ class ChatPanel:
         )
         self._msg_list.controls.append(warning)
         try:
-            self.page.update()
+            self._panel_container.update()
         except Exception:
             pass
 
@@ -566,7 +599,7 @@ class ChatPanel:
             detail_col.visible = not detail_col.visible
             chevron.name = ft.Icons.EXPAND_LESS if detail_col.visible else ft.Icons.EXPAND_MORE
             try:
-                self.page.update()
+                self._panel_container.update()
             except Exception:
                 pass
 
@@ -595,7 +628,7 @@ class ChatPanel:
         )
         self._msg_list.controls.append(bubble)
         try:
-            self.page.update()
+            self._panel_container.update()
         except Exception:
             pass
 
@@ -622,7 +655,7 @@ class ChatPanel:
         )
         self._msg_list.controls.append(bubble)
         try:
-            self.page.update()
+            self._panel_container.update()
         except Exception:
             pass
         return txt, bubble

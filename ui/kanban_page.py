@@ -16,12 +16,13 @@ from ui.board_view import (
 
 
 class KanbanPage:
-    def __init__(self, page: ft.Page, on_open_card, open_create_dialog_fn, on_show_graph=None, on_epic_change=None):
+    def __init__(self, page: ft.Page, on_open_card, open_create_dialog_fn, on_show_graph=None, on_epic_change=None, on_open_search=None):
         self._page = page
         self._on_open_card = on_open_card
         self._open_create_dialog = open_create_dialog_fn
         self._on_show_graph = on_show_graph
         self._on_epic_change_cb = on_epic_change
+        self._on_open_search = on_open_search
 
         self._current_epic: str | None = None  # None = Unassigned
         self._last_refreshed_epic: str | None = None  # Track last refresh to skip redundant refreshes
@@ -33,6 +34,8 @@ class KanbanPage:
         self._epic_dropdown: ft.Dropdown | None = None
         self._archive_btn: ft.IconButton | None = None
         self._board_container: ft.Container | None = None
+        self._epic_detail_container: ft.Container | None = None
+        self._epic_detail_expanded: bool = False
         self._view: ft.Column | None = None
         self._priority_pills: dict[str, ft.Container] = {}
         self._deadline_pills: dict[str, ft.Container] = {}
@@ -68,6 +71,14 @@ class KanbanPage:
             on_click=self._on_view_graph,
         )
 
+        self._notes_btn = ft.IconButton(
+            icon=ft.Icons.DESCRIPTION_OUTLINED,
+            icon_size=18,
+            icon_color="#8B949E",
+            tooltip="Toggle epic description & comments",
+            on_click=self._on_toggle_epic_detail,
+        )
+
         show_archived_sw = theme.eye_toggle(
             "Archived",
             False,
@@ -83,6 +94,7 @@ class KanbanPage:
                             ft.Text("Epic:", size=12, color="#8B949E"),
                             self._epic_dropdown,
                             graph_btn,
+                            self._notes_btn,
                             new_btn,
                             new_card_btn,
                             ft.VerticalDivider(width=1, color="#3E3E42"),
@@ -96,6 +108,14 @@ class KanbanPage:
                     ),
                     ft.Row(
                         [
+                            ft.IconButton(
+                                icon=ft.Icons.SEARCH,
+                                icon_size=18,
+                                icon_color="#8B949E",
+                                tooltip="Search cards  (Ctrl+K / ⌘K)",
+                                on_click=lambda e: self._on_open_search() if self._on_open_search else None,
+                            ),
+                            ft.VerticalDivider(width=1, color="#3E3E42"),
                             show_archived_sw,
                             ft.VerticalDivider(width=1, color="#3E3E42"),
                             self._archive_btn,
@@ -132,8 +152,11 @@ class KanbanPage:
             expand=True,
         )
 
+        self._epic_detail_container = ft.Container(visible=False)
+        self._refresh_epic_detail()
+
         self._view = ft.Column(
-            [epic_row, self._board_container],
+            [epic_row, self._epic_detail_container, self._board_container],
             spacing=0,
             expand=True,
         )
@@ -181,6 +204,7 @@ class KanbanPage:
         self._archive_btn.icon_color = new_btn.icon_color  # type: ignore[union-attr]
         self._archive_btn.tooltip = new_btn.tooltip  # type: ignore[union-attr]
         self._archive_btn.disabled = new_btn.disabled  # type: ignore[union-attr]
+        self._refresh_epic_detail()
         self._page.update()
 
     def select_epic(self, epic: str | None) -> None:
@@ -192,6 +216,7 @@ class KanbanPage:
         self._last_refreshed_epic = epic
         self._current_epic = epic
         self._rebuild_epic_controls()
+        self._refresh_epic_detail()
         self.refresh_board()
 
     # ── Helpers ─────────────────────────────────────────────────────────────
@@ -399,6 +424,264 @@ class KanbanPage:
         self._col_lv_ref.update(col_lv)
         self._board_container.content = board_row
 
+    # ── Epic detail panel ────────────────────────────────────────────────────
+
+    def _on_toggle_epic_detail(self, e) -> None:
+        self._epic_detail_expanded = not self._epic_detail_expanded
+        # Update button highlight
+        self._notes_btn.icon_color = "#58A6FF" if self._epic_detail_expanded else "#8B949E"
+        self._refresh_epic_detail()
+        self._page.update()
+
+    def _refresh_epic_detail(self) -> None:
+        """Rebuild the epic detail panel content based on current state."""
+        if self._epic_detail_container is None:
+            return
+
+        # Hide if collapsed or no epic selected
+        if not self._epic_detail_expanded or self._current_epic is None:
+            self._epic_detail_container.visible = False
+            self._epic_detail_container.content = None
+            return
+
+        detail = _epics.get_epic_detail(self._current_epic)
+        if detail is None:
+            self._epic_detail_container.visible = False
+            self._epic_detail_container.content = None
+            return
+
+        description = detail.get("description", "")
+        comments = detail.get("comments", [])
+
+        # ── Description section
+        desc_controls: list[ft.Control] = []
+        desc_controls.append(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.ARTICLE_OUTLINED, size=14, color="#8B949E"),
+                    ft.Text("Description", size=12, weight=ft.FontWeight.W_600, color="#C9D1D9"),
+                    ft.Container(expand=True),
+                    ft.TextButton(
+                        "Edit" if description else "Add",
+                        style=ft.ButtonStyle(color="#58A6FF"),
+                        on_click=self._on_edit_description,
+                    ),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        )
+        if description:
+            desc_controls.append(
+                ft.Container(
+                    content=ft.Markdown(
+                        description,
+                        selectable=True,
+                        extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                        code_theme=ft.MarkdownCodeTheme.MONOKAI,
+                    ),
+                    padding=ft.Padding(8, 4, 8, 8),
+                )
+            )
+        else:
+            desc_controls.append(
+                ft.Container(
+                    content=ft.Text(
+                        "No description yet. Click 'Add' to write about this epic.",
+                        size=12, italic=True, color="#6E7681",
+                    ),
+                    padding=ft.Padding(8, 4, 8, 8),
+                )
+            )
+
+        # ── Comments section
+        comment_controls: list[ft.Control] = []
+        comment_controls.append(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, size=14, color="#8B949E"),
+                    ft.Text(
+                        f"Comments ({len(comments)})",
+                        size=12, weight=ft.FontWeight.W_600, color="#C9D1D9",
+                    ),
+                    ft.Container(expand=True),
+                    ft.TextButton(
+                        "+ Add",
+                        style=ft.ButtonStyle(color="#58A6FF"),
+                        on_click=self._on_add_comment,
+                    ),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        )
+        if comments:
+            for c in reversed(comments):  # newest first
+                ts = c.get("created_at", "")[:16].replace("T", " ")
+                comment_controls.append(
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Row(
+                                    [
+                                        ft.Text(ts, size=10, color="#6E7681"),
+                                        ft.Container(expand=True),
+                                        ft.IconButton(
+                                            icon=ft.Icons.DELETE_OUTLINE,
+                                            icon_size=14,
+                                            icon_color="#6E7681",
+                                            tooltip="Delete comment",
+                                            on_click=lambda e, cid=c["id"]: self._on_delete_comment(cid),
+                                        ),
+                                    ],
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                ft.Markdown(
+                                    c.get("text", ""),
+                                    selectable=True,
+                                    extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                                    code_theme=ft.MarkdownCodeTheme.MONOKAI,
+                                ),
+                            ],
+                            spacing=2,
+                        ),
+                        bgcolor="#1C1C1C",
+                        border_radius=6,
+                        padding=ft.Padding(10, 6, 10, 8),
+                        margin=ft.Margin(0, 2, 0, 2),
+                    )
+                )
+        else:
+            comment_controls.append(
+                ft.Container(
+                    content=ft.Text(
+                        "No comments yet.",
+                        size=12, italic=True, color="#6E7681",
+                    ),
+                    padding=ft.Padding(8, 4, 8, 8),
+                )
+            )
+
+        # Left 2/3: description | Right 1/3: comments
+        left_col = ft.Container(
+            content=ft.Column(
+                desc_controls,
+                spacing=4,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            expand=2,
+            padding=ft.Padding(0, 0, 12, 0),
+        )
+        right_col = ft.Container(
+            content=ft.Column(
+                comment_controls,
+                spacing=4,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            expand=1,
+            border=ft.Border(left=ft.BorderSide(1, "#3E3E42")),
+            padding=ft.Padding(12, 0, 0, 0),
+        )
+
+        panel = ft.Container(
+            content=ft.Row(
+                [left_col, right_col],
+                spacing=0,
+                expand=True,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+            bgcolor="#252526",
+            border=ft.Border(bottom=ft.BorderSide(1, "#3E3E42")),
+            padding=ft.Padding(16, 12, 16, 12),
+            height=220,
+        )
+
+        self._epic_detail_container.content = panel
+        self._epic_detail_container.visible = True
+
+    def _on_edit_description(self, e) -> None:
+        """Open a dialog to edit the epic description."""
+        current_desc = _epics.get_epic_description(self._current_epic or "")
+        desc_field = ft.TextField(
+            value=current_desc,
+            multiline=True,
+            min_lines=30,
+            hint_text="Write a markdown description for this epic...",
+            bgcolor="#1C1C1C",
+            border_color="#3E3E42",
+            text_size=13,
+            expand=True,
+        )
+
+        def save(_):
+            text = desc_field.value or ""
+            try:
+                _epics.set_epic_description(self._current_epic or "", text)
+            except ValueError as ex:
+                desc_field.error_text = str(ex)
+                self._page.update()
+                return
+            dlg.open = False
+            self._refresh_epic_detail()
+            self._page.update()
+
+        dlg = ft.AlertDialog(
+            title=ft.Text("Edit Epic Description"),
+            content=ft.Container(content=desc_field, width=900, height=600),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _: setattr(dlg, "open", False) or self._page.update()),
+                ft.TextButton("Save", on_click=save),
+            ],
+        )
+        self._page.overlay.append(dlg)
+        dlg.open = True
+        self._page.update()
+
+    def _on_add_comment(self, e) -> None:
+        """Open a dialog to add a comment to the epic."""
+        comment_field = ft.TextField(
+            multiline=True,
+            min_lines=3,
+            max_lines=8,
+            hint_text="Write a comment (markdown supported)...",
+            bgcolor="#1C1C1C",
+            border_color="#3E3E42",
+            text_size=13,
+            autofocus=True,
+        )
+
+        def save(_):
+            text = (comment_field.value or "").strip()
+            if not text:
+                comment_field.error_text = "Comment cannot be empty"
+                self._page.update()
+                return
+            try:
+                _epics.add_epic_comment(self._current_epic or "", text)
+            except ValueError as ex:
+                comment_field.error_text = str(ex)
+                self._page.update()
+                return
+            dlg.open = False
+            self._refresh_epic_detail()
+            self._page.update()
+
+        dlg = ft.AlertDialog(
+            title=ft.Text("Add Epic Comment"),
+            content=ft.Container(content=comment_field, width=500),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _: setattr(dlg, "open", False) or self._page.update()),
+                ft.TextButton("Add", on_click=save),
+            ],
+        )
+        self._page.overlay.append(dlg)
+        dlg.open = True
+        self._page.update()
+
+    def _on_delete_comment(self, comment_id: str) -> None:
+        """Delete a comment from the current epic."""
+        _epics.delete_epic_comment(self._current_epic or "", comment_id)
+        self._refresh_epic_detail()
+        self._page.update()
+
     # ── Event handlers ───────────────────────────────────────────────────────
 
     def _on_epic_change(self, e) -> None:
@@ -406,6 +689,7 @@ class KanbanPage:
         self._current_epic = None if key == "__unassigned__" else key
         self._last_refreshed_epic = self._current_epic
         self._rebuild_epic_controls()
+        self._refresh_epic_detail()
         self.refresh_board()
         if self._on_epic_change_cb is not None:
             self._on_epic_change_cb(self._current_epic)

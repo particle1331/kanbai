@@ -19,6 +19,7 @@ def run_app() -> None:
     from board.storage.sync import full_sync
     from ui.card_dialog import open_create_dialog, open_edit_dialog
     from ui.chat_panel import ChatPanel
+    from ui.search_overlay import open_search_overlay
     from ui.kanban_page import KanbanPage
     from ui.table_page import TablePage
     from ui.health_page import HealthPage
@@ -60,13 +61,13 @@ def run_app() -> None:
 
                 def on_updated(cid, col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
                 def on_moved(cid, old_col, new_col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
                 def on_archived(cid, col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
                     _go_back()
 
                 open_edit_dialog(
@@ -131,6 +132,10 @@ def run_app() -> None:
             # Health badge shown in the header.
             _health_header_badge = ft.Container(visible=False)
 
+            # ── Git dirty-state / sync badge ────────────────────────────────────
+            _git_state: dict = {"is_repo": None, "syncing": False}
+            _git_badge = ft.Container(visible=False)
+
             def _refresh_health_badge() -> None:
                 from board.health import project_health
                 h = project_health()
@@ -167,9 +172,117 @@ def run_app() -> None:
                 _health_header_badge.tooltip = ft.Tooltip(message=tip, prefer_below=True, wait_duration=300) if visible else None
                 _health_header_badge.visible = True
                 try:
-                    page.update()
+                    page.update(_health_header_badge, *_all_nav_dots)
                 except Exception:
                     pass
+
+            def _refresh_git_status() -> None:
+                """Check git dirty state and update the header badge (safe to call from any thread)."""
+                from board.storage import git_ops
+                if _git_state["syncing"]:
+                    return
+                try:
+                    if _git_state["is_repo"] is None:
+                        _git_state["is_repo"] = git_ops.is_git_repo()
+                    if not _git_state["is_repo"]:
+                        return
+                    dirty = git_ops.is_dirty()
+                    if dirty:
+                        _git_badge.content = ft.Row(
+                            [
+                                ft.Icon(ft.Icons.CLOUD_UPLOAD_OUTLINED, size=12, color="#F0A742"),
+                                ft.Text("uncommitted", size=11, color="#F0A742"),
+                            ],
+                            spacing=4,
+                            tight=True,
+                        )
+                        _git_badge.bgcolor = "#2A2200"
+                        _git_badge.border_radius = 4
+                        _git_badge.padding = ft.Padding(6, 4, 6, 4)
+                        _git_badge.tooltip = ft.Tooltip(
+                            message="Board data has uncommitted changes \u2014 click to commit & push",
+                            prefer_below=True,
+                            wait_duration=200,
+                        )
+                        _git_badge.on_click = lambda _e: _do_git_sync()
+                        _git_badge.ink = True
+                        _git_badge.visible = True
+                    else:
+                        _git_badge.visible = False
+                    try:
+                        page.update(_git_badge)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            def _do_git_sync() -> None:
+                """Commit board_data changes and push in a background thread."""
+                if _git_state["syncing"]:
+                    return
+                _git_state["syncing"] = True
+                # Immediately show the syncing state.
+                _git_badge.content = ft.Row(
+                    [
+                        ft.ProgressRing(width=11, height=11, stroke_width=2, color="#58A6FF"),
+                        ft.Text("syncing\u2026", size=11, color="#58A6FF"),
+                    ],
+                    spacing=4,
+                    tight=True,
+                )
+                _git_badge.bgcolor = "#1C3A5C"
+                _git_badge.border_radius = 4
+                _git_badge.padding = ft.Padding(6, 4, 6, 4)
+                _git_badge.tooltip = None
+                _git_badge.on_click = None
+                _git_badge.ink = False
+                _git_badge.visible = True
+                try:
+                    page.update(_git_badge)
+                except Exception:
+                    pass
+
+                def _worker() -> None:
+                    from board.storage import git_ops
+                    try:
+                        ok, msg = git_ops.sync_push()
+                    except Exception as exc:
+                        ok, msg = False, str(exc)
+                    _git_state["syncing"] = False
+                    if ok:
+                        _git_badge.visible = False
+                    else:
+                        _git_badge.content = ft.Row(
+                            [
+                                ft.Icon(ft.Icons.CLOUD_OFF_OUTLINED, size=12, color="#F85149"),
+                                ft.Text("sync failed", size=11, color="#F85149"),
+                            ],
+                            spacing=4,
+                            tight=True,
+                        )
+                        _git_badge.bgcolor = "#2A0A08"
+                        _git_badge.border_radius = 4
+                        _git_badge.padding = ft.Padding(6, 4, 6, 4)
+                        _git_badge.tooltip = ft.Tooltip(message=msg, prefer_below=True, wait_duration=200)
+                        _git_badge.on_click = lambda _e: _do_git_sync()
+                        _git_badge.ink = True
+                        _git_badge.visible = True
+                    try:
+                        page.update(_git_badge)
+                    except Exception:
+                        pass
+
+                import threading
+                threading.Thread(target=_worker, daemon=True).start()
+
+            def _start_git_poll() -> None:
+                """Background thread: re-check git dirty state every 30 seconds."""
+                import threading, time
+                def _poll():
+                    while True:
+                        time.sleep(30)
+                        _refresh_git_status()
+                threading.Thread(target=_poll, daemon=True).start()
 
             def show_graph_for_epic(epic) -> None:
                 _shared_epic["value"] = epic
@@ -193,6 +306,7 @@ def run_app() -> None:
                 open_create_dialog,
                 on_show_graph=show_graph_for_epic,
                 on_epic_change=_on_epic_changed,
+                on_open_search=lambda: open_search_overlay(page, on_open_card),
             )
             table_pg = TablePage(page, on_open_card)
             health_pg = HealthPage(
@@ -253,6 +367,7 @@ def run_app() -> None:
                 table_pg.refresh()
                 graph_pg.refresh_epics()  # calls _refresh_graph() internally; no need to also call graph_pg.refresh()
                 _refresh_health_badge()
+                _refresh_git_status()
 
             chat = ChatPanel(page, on_board_change=on_board_change)
 
@@ -392,6 +507,7 @@ def run_app() -> None:
                         ),
                         ft.Row([
                             _health_header_badge,
+                            _git_badge,
                             ft.Container(
                                 content=ft.Text(
                                     f"{synced} card{'s' if synced != 1 else ''} loaded",
@@ -443,6 +559,20 @@ def run_app() -> None:
                 )
             )
             _refresh_health_badge()
+            _refresh_git_status()
+            _start_git_poll()
+
+            # Global keyboard shortcut: Ctrl+K → search overlay
+            _prev_kb_handler = page.on_keyboard_event
+
+            def _global_keyboard(e: ft.KeyboardEvent) -> None:
+                if e.key == "K" and (e.ctrl or e.meta):
+                    open_search_overlay(page, on_open_card)
+                    return
+                if _prev_kb_handler:
+                    _prev_kb_handler(e)
+
+            page.on_keyboard_event = _global_keyboard
 
         except Exception:
             with open("kanbai_crash.log", "w") as f:
