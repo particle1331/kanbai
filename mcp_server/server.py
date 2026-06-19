@@ -94,6 +94,7 @@ def get_card(card_id: str) -> dict | None:
         "links": card.links,
         "attachments": card.attachments,
         "due_date": card.due_date,
+        "comments": card.comments,
     }
 
 
@@ -182,6 +183,71 @@ def unarchive_epic(epic_name: str) -> dict:
     """Restore an archived epic and its snapshotted cards."""
     count = operations.unarchive_epic_op(epic_name)
     return {"restored_cards": count}
+
+
+@tool("write")
+def create_epic(name: str, description: str = "") -> dict:
+    """Create a new epic with an optional description (markdown supported)."""
+    if _epics.epic_exists(name):
+        return {"error": f"Epic '{name}' already exists."}
+    _epics.create_epic(name, description)
+    return {"created": name}
+
+
+@tool("read")
+def get_epic(epic_name: str) -> dict | None:
+    """Get full details of an epic: name, archived status, description, and comments."""
+    return _epics.get_epic_detail(epic_name)
+
+
+@tool("write")
+def set_epic_description(epic_name: str, description: str) -> dict:
+    """Set or replace the markdown description of an epic. Use this to document goals, context, and commentary for the epic."""
+    try:
+        ok = _epics.set_epic_description(epic_name, description)
+    except ValueError as ex:
+        return {"error": str(ex)}
+    if not ok:
+        return {"error": f"Epic '{epic_name}' not found."}
+    return {"updated": True}
+
+
+@tool("write")
+def add_epic_comment(epic_name: str, text: str) -> dict:
+    """Add a comment to an epic. Use this to log progress notes, decisions, or status updates about the epic."""
+    try:
+        comment = _epics.add_epic_comment(epic_name, text)
+    except ValueError as ex:
+        return {"error": str(ex)}
+    if comment is None:
+        return {"error": f"Epic '{epic_name}' not found."}
+    return comment
+
+
+@tool("write")
+def delete_epic_comment(epic_name: str, comment_id: str) -> dict:
+    """Delete a comment from an epic by its comment ID."""
+    ok = _epics.delete_epic_comment(epic_name, comment_id)
+    return {"deleted": ok}
+
+
+@tool("write")
+def add_card_comment(card_id: str, text: str) -> dict:
+    """Add a comment to a card. Use this to log notes, decisions, or status updates about the card."""
+    try:
+        card = operations.add_comment(card_id, text)
+    except ValueError as ex:
+        return {"error": str(ex)}
+    if card is None:
+        return {"error": f"Card '{card_id}' not found."}
+    return card.comments[-1]
+
+
+@tool("write")
+def delete_card_comment(card_id: str, comment_id: str) -> dict:
+    """Delete a comment from a card by its comment ID."""
+    card = operations.delete_comment(card_id, comment_id)
+    return {"deleted": card is not None}
 
 
 @tool("write")

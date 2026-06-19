@@ -223,6 +223,18 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_epic",
+            "description": "Get full details of an epic by name, including its description and comments",
+            "parameters": {
+                "type": "object",
+                "properties": {"epic_name": {"type": "string", "description": "The epic name"}},
+                "required": ["epic_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "link_cards",
             "description": "Create a typed link between two cards. link_type: blocks, blocked_by, parent_of, child_of, duplicate, relates_to",
             "parameters": {
@@ -413,7 +425,7 @@ action, then briefly confirm what you changed. Be concise and action-oriented.""
 _PROMPTS = {"ask": _ASK_PROMPT, "agent": _AGENT_PROMPT, "plan": _PLAN_PROMPT, "yolo": _YOLO_PROMPT}
 
 # Tools that only read state — available in every mode.
-_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_epics", "convert_timestamps_to_local", "get_board_summary", "get_health_model"}
+_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_epics", "get_epic", "convert_timestamps_to_local", "get_board_summary", "get_health_model"}
 
 _WRITE_TOOL_NAMES = {
     "create_card", "update_card", "move_card", "archive_card",
@@ -536,6 +548,12 @@ def _dispatch_tool(name: str, args: dict) -> str:
         count = operations.unarchive_epic_op(args["epic_name"])
         return json.dumps({"restored_cards": count})
 
+    if name == "get_epic":
+        detail = _epics.get_epic_detail(args["epic_name"])
+        if detail is None:
+            return json.dumps({"error": "not_found", "epic_name": args["epic_name"]})
+        return json.dumps(detail)
+
     if name == "link_cards":
         err = operations.link_cards(args["from_number"], args["to_number"], args["link_type"])
         return json.dumps({"ok": err is None, "error": err})
@@ -593,19 +611,37 @@ def _dispatch_tool(name: str, args: dict) -> str:
     return json.dumps({"error": "unknown_tool", "name": name})
 
 
+_client_cache: AzureOpenAI | None = None
+_client_cache_key: tuple[str, str, str] | None = None
+
+
 def _make_client() -> AzureOpenAI:
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    global _client_cache, _client_cache_key
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or ""
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY") or ""
     if not endpoint or not api_key:
         raise RuntimeError(
             "Azure OpenAI not configured. Set AZURE_OPENAI_ENDPOINT and "
             "AZURE_OPENAI_API_KEY in your .env file."
         )
-    return AzureOpenAI(
-        api_key=api_key,
-        azure_endpoint=endpoint,
-        api_version=_AZURE_API_VERSION,
-    )
+    cache_key = (endpoint, api_key, _AZURE_API_VERSION)
+    if _client_cache is None or _client_cache_key != cache_key:
+        _client_cache = AzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=endpoint,
+            api_version=_AZURE_API_VERSION,
+        )
+        _client_cache_key = cache_key
+    return _client_cache
+
+
+def warm_up() -> None:
+    """Pre-create the Azure OpenAI client so the first message has no setup delay.
+    Safe to call from a background thread at startup."""
+    try:
+        _make_client()
+    except Exception:
+        pass  # misconfigured env — will surface properly on first real send
 
 
 def chat(
