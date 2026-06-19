@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 BOARD_DIR = REPO_ROOT / "board_data"
 ASSETS_DIR = BOARD_DIR / "assets"
+ATTACHMENTS_DIR = ASSETS_DIR / "attachments"
 COUNTER_PATH = BOARD_DIR / "counter.json"
 EPICS_PATH = BOARD_DIR / "epics.json"
 SETTINGS_PATH = BOARD_DIR / "settings.json"

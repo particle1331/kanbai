@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import threading
 import flet as ft
 from collections.abc import Callable
 from datetime import datetime, date
+from pathlib import Path
 
 # ── Dialog layout constants ───────────────────────────────────────────────────
 _DIALOG_WIDTH = 810
@@ -561,7 +565,7 @@ def open_edit_dialog(
     links_col = ft.Column(spacing=2)
 
     # Persisted fold state so sections stay open/closed across re-renders.
-    fold_state = {"rel": False, "comments": False}
+    fold_state = {"rel": False, "comments": False, "att": False}
 
     def _make_fold(state_key: str, title: str, body: ft.Control) -> ft.Column:
         is_open = fold_state.get(state_key, False)
@@ -625,10 +629,13 @@ def open_edit_dialog(
         for cm in card.comments:
             def _del(e, cid=cm.get("id")) -> None:
                 nonlocal card
-                operations.delete_comment(card_id, cid)
-                card = operations.get_card(card_id) or card
-                _build_comments()
-                page.update()
+                def _do() -> None:
+                    nonlocal card
+                    operations.delete_comment(card_id, cid)
+                    card = operations.get_card(card_id) or card
+                    _build_comments()
+                    page.update()
+                threading.Thread(target=_do, daemon=True).start()
 
             date_str, time_str = _fmt_ts_parts(cm.get("created_at", ""))
             comments_col.controls.append(
@@ -667,11 +674,19 @@ def open_edit_dialog(
         txt = (comment_field.value or "").strip()
         if not txt:
             return
-        operations.add_comment(card_id, txt)
         comment_field.value = ""
-        card = operations.get_card(card_id) or card
-        _build_comments()
+        comment_field.disabled = True
         page.update()
+
+        def _do() -> None:
+            nonlocal card
+            operations.add_comment(card_id, txt)
+            card = operations.get_card(card_id) or card
+            comment_field.disabled = False
+            _build_comments()
+            page.update()
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _comments_section(editable: bool) -> ft.Control:
         _build_comments()
@@ -680,6 +695,175 @@ def open_edit_dialog(
             children.append(comment_field)
         body = ft.Column(children, spacing=8)
         return _make_fold("comments", f"Comments ({len(card.comments)})", body)
+
+    # ── Attachments ───────────────────────────────────────────────────────────
+    att_error = ft.Text("", color=ft.Colors.RED_400, size=11)
+    att_col = ft.Column(spacing=4)
+
+    # FilePicker is a Service — it auto-registers with page._services on init.
+    # Do NOT add it to page.overlay (that causes "Unknown control: FilePicker").
+    file_picker = ft.FilePicker()
+
+    def _fmt_size(size_bytes: int) -> str:
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+    def _ext_icon(filename: str) -> str:
+        ext = Path(filename).suffix.lower()
+        if ext in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"}:
+            return ft.Icons.IMAGE_OUTLINED
+        if ext == ".pdf":
+            return ft.Icons.PICTURE_AS_PDF_OUTLINED
+        if ext in {".zip", ".gz", ".tar", ".bz2", ".7z", ".rar", ".xz"}:
+            return ft.Icons.FOLDER_ZIP_OUTLINED
+        if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"}:
+            return ft.Icons.VIDEO_FILE_OUTLINED
+        if ext in {".mp3", ".wav", ".flac", ".m4a", ".ogg"}:
+            return ft.Icons.AUDIO_FILE_OUTLINED
+        if ext in {".py", ".js", ".ts", ".html", ".css", ".json",
+                   ".md", ".txt", ".csv", ".xml", ".yaml", ".yml",
+                   ".toml", ".ini", ".cfg", ".rst"}:
+            return ft.Icons.CODE
+        return ft.Icons.ATTACH_FILE
+
+    def _open_attachment(filename: str) -> None:
+        att_path = operations.get_attachment_path(card_id, filename)
+        if not att_path.exists():
+            att_error.value = f"File not found: {filename}"
+            page.update()
+            return
+        path_str = str(att_path)
+        if sys.platform == "darwin":
+            subprocess.run(["open", path_str])
+        elif sys.platform == "win32":
+            import os
+            os.startfile(path_str)
+        else:
+            subprocess.run(["xdg-open", path_str])
+
+    def _build_attachments() -> None:
+        att_col.controls.clear()
+        if not card.attachments:
+            att_col.controls.append(
+                ft.Text("No attachments.", size=11, color="#6E7681", italic=True)
+            )
+        else:
+            for fname in list(card.attachments):
+                att_path = operations.get_attachment_path(card_id, fname)
+                size_str = ""
+                try:
+                    if att_path.exists():
+                        size_str = f" · {_fmt_size(att_path.stat().st_size)}"
+                except OSError:
+                    pass
+
+                def _open(e, fn=fname) -> None:
+                    _open_attachment(fn)
+
+                def _del_att(e, fn=fname) -> None:
+                    nonlocal card
+                    err = operations.remove_attachment(card_id, fn)
+                    if err:
+                        att_error.value = err
+                        page.update()
+                        return
+                    att_error.value = ""
+                    card = operations.get_card(card_id) or card
+                    _build_attachments()
+                    page.update()
+
+                att_col.controls.append(
+                    ft.Container(
+                        content=ft.Row(
+                            [
+                                ft.Icon(_ext_icon(fname), size=14, color="#8B949E"),
+                                ft.Text(
+                                    fname + size_str,
+                                    size=12,
+                                    color="#C9D1D9",
+                                    expand=True,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                ),
+                                ft.IconButton(
+                                    ft.Icons.OPEN_IN_NEW,
+                                    icon_size=13,
+                                    icon_color="#58A6FF",
+                                    on_click=_open,
+                                    tooltip="Open file",
+                                    padding=ft.Padding(0, 0, 0, 0),
+                                ),
+                                ft.IconButton(
+                                    ft.Icons.CANCEL,
+                                    icon_size=13,
+                                    icon_color="#6E7681",
+                                    on_click=_del_att,
+                                    tooltip="Remove attachment",
+                                    padding=ft.Padding(0, 0, 0, 0),
+                                ),
+                            ],
+                            spacing=4,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        bgcolor="#161B22",
+                        border_radius=6,
+                        padding=ft.Padding(8, 5, 4, 5),
+                    )
+                )
+        # "Add files" button — always present
+        att_col.controls.append(
+            ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.ATTACH_FILE, size=13, color="#8B949E"),
+                        ft.Text("Add files…", size=11, color="#8B949E"),
+                    ],
+                    spacing=4,
+                    tight=True,
+                ),
+                on_click=_pick_files,
+                ink=True,
+                border_radius=6,
+                bgcolor="#21262D",
+                padding=ft.Padding(8, 5, 8, 5),
+            )
+        )
+        att_col.controls.append(att_error)
+
+    def _pick_files(e) -> None:
+        async def _do() -> None:
+            nonlocal card
+            files = await file_picker.pick_files(
+                dialog_title="Attach files to card",
+                allow_multiple=True,
+            )
+            if not files:
+                return
+            errors: list[str] = []
+            for f in files:
+                if f.path:
+                    err = operations.add_attachment(card_id, f.path)
+                    if err:
+                        errors.append(err)
+            att_error.value = "; ".join(errors) if errors else ""
+            card = operations.get_card(card_id) or card
+            _build_attachments()
+            page.update()
+
+        page.run_task(_do)
+
+    _build_attachments()
+
+    def _attachments_section() -> ft.Control:
+        return _make_fold(
+            "att",
+            f"Attachments ({len(card.attachments)})",
+            ft.Column([att_col], spacing=2),
+        )
 
     def _build_link_rows(edit_mode: bool = False) -> None:
         links_col.controls.clear()
@@ -909,8 +1093,13 @@ def open_edit_dialog(
         card = operations.get_card(card_id) or card
         _render("view")
 
+    def _cleanup_picker() -> None:
+        """No-op: FilePicker is a Service and auto-unregisters when unreferenced."""
+        pass
+
     def _archive(e) -> None:
         operations.archive_card(card_id)
+        _cleanup_picker()
         page.pop_dialog()
         on_archived(card_id, original_lane)
 
@@ -921,6 +1110,7 @@ def open_edit_dialog(
             op_error.value = str(ex)
             page.update()
             return
+        _cleanup_picker()
         page.pop_dialog()
         on_archived(card_id, original_lane)
 
@@ -929,6 +1119,7 @@ def open_edit_dialog(
             page.pop_dialog()  # close confirm dialog
             ok = operations.delete_card(card_id)
             if ok:
+                _cleanup_picker()
                 page.pop_dialog()  # close card dialog
                 on_archived(card_id, original_lane)
 
@@ -943,12 +1134,14 @@ def open_edit_dialog(
         page.show_dialog(confirm_dlg)
 
     def _close(e) -> None:
+        _cleanup_picker()
         page.pop_dialog()
         if on_close:
             on_close()
 
     def _view_relationships() -> None:
         from ui.graph_page import open_graph_dialog
+        _cleanup_picker()
         page.pop_dialog()
 
         def _restore_card_dialog() -> None:
@@ -1150,6 +1343,7 @@ def open_edit_dialog(
                 ft.Divider(height=1, color="#3E3E42"),
                 _make_fold("rel", f"Relationships ({rel_count})", ft.Column([links_col], spacing=2)),
                 _comments_section(editable=True),
+                _attachments_section(),
             ],
             spacing=14,
             scroll=ft.ScrollMode.AUTO,
@@ -1215,6 +1409,7 @@ def open_edit_dialog(
                     ft.Divider(height=1, color="#3E3E42"),
                     _make_fold("rel", "Relationships", rel_section),
                     _comments_section(editable=True),
+                    _attachments_section(),
                 ],
                 spacing=12,
                 scroll=ft.ScrollMode.AUTO,

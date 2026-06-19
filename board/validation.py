@@ -22,6 +22,14 @@ MAX_COMMENTS    = 200
 MAX_COMMENT_LEN = 4_000
 MAX_EPIC_LEN    = 100
 MAX_CARDS_PER_EPIC = 500  # active cards per epic (Unassigned counts as one bucket)
+MAX_ATTACHMENTS = 20
+MAX_ATTACHMENT_SIZE_MB = 100
+BLOCKED_EXTENSIONS = {
+    ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".wsf",
+    ".sh", ".bash", ".zsh",
+    ".msi", ".app", ".dmg", ".pkg", ".deb", ".rpm",
+    ".bin", ".com", ".scr", ".pif",
+}
 
 # ── Soft-warning thresholds (checked separately by the UI) ────────────────────
 
@@ -124,6 +132,29 @@ def validate_comment(text: str, current_count: int) -> None:
     if current_count >= MAX_COMMENTS:
         raise ValueError(
             f"comments: maximum {MAX_COMMENTS} comments per card reached."
+        )
+
+
+def validate_attachment(src_path: str, current_count: int) -> None:
+    """Raise ``ValueError`` if the attachment violates hard limits."""
+    import os
+    from pathlib import Path
+    p = Path(src_path)
+    if not p.exists():
+        raise ValueError(f"File not found: {src_path}")
+    if current_count >= MAX_ATTACHMENTS:
+        raise ValueError(
+            f"attachments: maximum {MAX_ATTACHMENTS} attachments per card."
+        )
+    size_mb = p.stat().st_size / (1024 * 1024)
+    if size_mb > MAX_ATTACHMENT_SIZE_MB:
+        raise ValueError(
+            f"File is too large ({size_mb:.1f} MB). Maximum is {MAX_ATTACHMENT_SIZE_MB} MB."
+        )
+    ext = p.suffix.lower()
+    if ext in BLOCKED_EXTENSIONS:
+        raise ValueError(
+            f"File type '{ext}' is not allowed for security reasons."
         )
 
 

@@ -25,6 +25,16 @@ def write_card(card: Card) -> None:
 
 
 def read_card(card_id: str) -> Card | None:
+    # Fast path: look up the lane from the SQLite cache to build the path directly.
+    # Import here to avoid a circular dependency at module load time.
+    from board.storage import sqlite_cache
+    cached = sqlite_cache.get_card_by_id(card_id)
+    if cached:
+        direct = BOARD_DIR / cached["lane"] / f"{card_id}.md"
+        if direct.exists():
+            post = frontmatter.load(str(direct))
+            return Card.from_frontmatter(post.metadata, post.content)
+    # Fallback: scan all files (handles cards not yet in the cache).
     for path in _all_md_files():
         if path.stem == card_id:
             post = frontmatter.load(str(path))

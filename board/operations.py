@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import re
+import shutil
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from board import counter as _counter
 from board import epics as _epics
 from board import validation as _validation
 from board.models import Card, _UNSET
 from board.storage import event_log, markdown_store, sqlite_cache
+from paths import ATTACHMENTS_DIR
 
 LINK_INVERSES: dict[str, str] = {
     "blocks": "blocked_by",
@@ -416,6 +420,89 @@ def unlink_cards(from_number: int, to_number: int, link_type: str) -> str | None
     sqlite_cache.upsert_card(to_card)
     return None
 
+
+# ── Attachments ──────────────────────────────────────────────────────────────
+
+def _sanitize_filename(name: str) -> str:
+    """Strip unsafe characters from a filename, preserving the extension."""
+    # Replace path separators, commas (used as delimiter in SQLite), and null bytes
+    name = re.sub(r'[/\\,\x00]', '_', name)
+    return name[:200]
+
+
+def get_attachment_dir(card_id: str) -> Path:
+    """Return the directory where a card's attachments are stored."""
+    return ATTACHMENTS_DIR / card_id
+
+
+def get_attachment_path(card_id: str, filename: str) -> Path:
+    """Return the full path of a specific attachment file."""
+    return get_attachment_dir(card_id) / filename
+
+
+def add_attachment(card_id: str, src_path: str) -> str | None:
+    """Copy *src_path* into the card's attachment directory.
+
+    Returns an error string on failure, or ``None`` on success.
+    """
+    card = markdown_store.read_card(card_id)
+    if not card:
+        return "Card not found."
+    try:
+        _validation.validate_attachment(src_path, len(card.attachments))
+    except ValueError as ex:
+        return str(ex)
+
+    src = Path(src_path)
+    filename = _sanitize_filename(src.name)
+
+    att_dir = get_attachment_dir(card_id)
+    att_dir.mkdir(parents=True, exist_ok=True)
+    dest = att_dir / filename
+
+    # Avoid overwriting an existing attachment by appending a counter.
+    if dest.exists():
+        stem, suffix = src.stem, src.suffix
+        for i in range(1, 1000):
+            candidate = att_dir / f"{stem}_{i}{suffix}"
+            if not candidate.exists():
+                dest = candidate
+                filename = dest.name
+                break
+        else:
+            return "Could not find a unique filename for the attachment."
+
+    shutil.copy2(src_path, str(dest))
+    card.attachments.append(filename)
+    card.updated_at = _now()
+    markdown_store.write_card(card)
+    sqlite_cache.upsert_card(card)
+    return None
+
+
+def remove_attachment(card_id: str, filename: str) -> str | None:
+    """Delete an attachment file and remove it from the card's metadata.
+
+    Returns an error string on failure, or ``None`` on success.
+    """
+    card = markdown_store.read_card(card_id)
+    if not card:
+        return "Card not found."
+    if filename not in card.attachments:
+        return f"Attachment '{filename}' not found on card."
+
+    att_path = get_attachment_path(card_id, filename)
+    if att_path.exists():
+        att_path.unlink()
+
+    card.attachments = [a for a in card.attachments if a != filename]
+    card.updated_at = _now()
+    markdown_store.write_card(card)
+    sqlite_cache.upsert_card(card)
+    return None
+
+
+# ── Relationship graph ────────────────────────────────────────────────────────
 
 def epic_graph(epic_name: str) -> dict:
     """Return nodes+edges for the graph view of an epic."""
