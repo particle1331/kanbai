@@ -44,13 +44,16 @@ Kanbai lives **inside** your project as a `.kanbai/` directory. It provides:
 ## Installation
 
 ```bash
-# With pipx (recommended — installs globally in isolated env)
+# With uv (recommended)
+uv tool install kanbai
+
+# Or with pipx
 pipx install kanbai
 
 # Or with pip
 pip install kanbai
 
-# Or from source
+# From source (development)
 git clone https://github.com/particle1331/kanbai
 cd kanbai
 uv sync
