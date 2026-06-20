@@ -1,0 +1,15 @@
+# AI models for the kanbai chat panel.
+# Each entry maps a display handle to an env var holding the model/deployment name.
+# The chat panel won't work until at least one valid model is configured.
+models:
+  - handle: nano
+    env_var: AZURE_OPENAI_DEPLOYMENT_NANO
+
+  - handle: mini
+    env_var: AZURE_OPENAI_DEPLOYMENT_MINI
+
+  - handle: base
+    env_var: AZURE_OPENAI_DEPLOYMENT_BASE
+
+  - handle: codex
+    env_var: AZURE_OPENAI_DEPLOYMENT_CODEX

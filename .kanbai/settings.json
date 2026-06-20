@@ -1,0 +1,18 @@
+{
+  "use_local_tz": true,
+  "reasoning_effort": "none",
+  "max_completion_tokens": 2048,
+  "stream_response": true,
+  "max_agent_steps": 8,
+  "token_usage": {
+    "nano": {
+      "prompt_tokens": 36863,
+      "completion_tokens": 897
+    },
+    "mini": {
+      "prompt_tokens": 5487,
+      "completion_tokens": 158
+    }
+  },
+  "git_tracking": true
+}
