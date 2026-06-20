@@ -186,11 +186,15 @@ def init(
     )
 
     # README.md — copy from kanbai package so users always have docs
+    import shutil
     from kanbai.paths import INSTALL_ROOT
+    # Try package-bundled copy first, then fall back to repo root (dev)
     pkg_readme = INSTALL_ROOT / "docs" / "README.md"
-    if pkg_readme.exists():
-        import shutil
-        shutil.copy2(pkg_readme, kanbai_dir / "README.md")
+    repo_readme = INSTALL_ROOT.parent.parent / "README.md"
+    for candidate in (pkg_readme, repo_readme):
+        if candidate.exists():
+            shutil.copy2(candidate, kanbai_dir / "README.md")
+            break
 
     typer.echo(f"✓ Initialized kanbai board in {kanbai_dir}")
     if no_git:
