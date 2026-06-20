@@ -12,6 +12,8 @@ wheels/
 # Kanbai — local state (never commit these)
 .env
 .cache.db
+board_data/.cache.db
+board_data/ui_state.json
 
 # OS
 .DS_Store
