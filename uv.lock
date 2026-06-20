@@ -585,6 +585,20 @@ wheels = [
 ]
 
 [[package]]
+name = "flet-web"
+version = "0.85.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "flet" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/2f/e02726358e23286c5b71f18fc30cc3f2044ff27a60a74bb709449011abe6/flet_web-0.85.3.tar.gz", hash = "sha256:9fb3d13508d82facd68b58ee5dca84dc4d76082678e64443a55d84ca6fc85068", size = 18560, upload-time = "2026-06-08T01:56:46.903Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/f0/818f45bacad66a2e3a7a6184f770871cbc422cc491f481c066d29a9213ff/flet_web-0.85.3-py3-none-any.whl", hash = "sha256:df229757bc93b1dd9113a82208d83e9397f6c426fc18a5049df84afc64cf4d9c", size = 23943263, upload-time = "2026-06-08T01:56:48.294Z" },
+]
+
+[[package]]
 name = "fonttools"
 version = "4.63.0"
 source = { registry = "https://pypi.org/simple" }
@@ -890,6 +904,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "flet" },
     { name = "flet-charts" },
+    { name = "flet-web" },
     { name = "matplotlib" },
     { name = "openai" },
     { name = "python-docx" },
@@ -906,6 +921,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.4.2" },
     { name = "flet", specifier = ">=0.85.3" },
     { name = "flet-charts", specifier = ">=0.85.3" },
+    { name = "flet-web", specifier = ">=0.85.3" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "openai", specifier = ">=1.50.0" },
     { name = "python-docx", specifier = ">=1.2.0" },
