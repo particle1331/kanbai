@@ -41,31 +41,16 @@ class ChatPanel:
 
     def _config_warning_text(self) -> tuple[str, str]:
         """Return (title, detail) for the config warning banner."""
-        import os
-        missing = []
-        if not os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip():
-            missing.append("AZURE_OPENAI_ENDPOINT")
-        if not os.environ.get("AZURE_OPENAI_API_KEY", "").strip():
-            missing.append("AZURE_OPENAI_API_KEY")
-        # Check model deployment env vars
-        model_vars_missing = []
-        for m in self._models:
-            if not os.environ.get(m.env_var, "").strip():
-                model_vars_missing.append(f"{m.env_var} (model: {m.handle})")
-        if model_vars_missing:
-            missing.extend(model_vars_missing)
-        detail = (
-            f"Missing: {', '.join(missing)}\n\n"
-            f"Add to your project's .env file:\n"
-            f"  AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/\n"
-            f"  AZURE_OPENAI_API_KEY=your-key\n"
+        return (
+            "AI chat not configured",
+            "The chat agent requires Azure OpenAI credentials and model\n"
+            "configuration. See the AI Chat Setup section in the README\n"
+            "for setup instructions.\n\n"
+            "Required:\n"
+            "  1. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env\n"
+            "  2. Configure model deployments in .kanbai/models.yml\n"
+            "  3. Set the deployment env vars in .env"
         )
-        if model_vars_missing:
-            detail += (
-                f"\nConfigure models in .kanbai/models.yml \n"
-                f"and set the deployment env vars in .env."
-            )
-        return "AI chat not configured", detail
 
     # ------------------------------------------------------------------
     # Public API
