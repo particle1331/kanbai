@@ -21,9 +21,8 @@ class ChatPanel:
         self._models: list[ModelDef] = load_models()
         self._model: ModelDef = self._models[0]
         self._busy = False   # guards against re-entrant / double sends
-        self._build()
-        # Check AI config and show warning if needed
         self._config_ok = self._check_ai_config()
+        self._build()
         threading.Thread(target=agent_chat.warm_up, daemon=True).start()
 
     def _check_ai_config(self) -> bool:
