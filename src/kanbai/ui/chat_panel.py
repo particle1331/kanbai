@@ -31,7 +31,41 @@ class ChatPanel:
         import os
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
         api_key = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
-        return bool(endpoint and api_key)
+        if not endpoint or not api_key:
+            return False
+        # Check that at least one model has its deployment env var set
+        for m in self._models:
+            if os.environ.get(m.env_var, "").strip():
+                return True
+        return False
+
+    def _config_warning_text(self) -> tuple[str, str]:
+        """Return (title, detail) for the config warning banner."""
+        import os
+        missing = []
+        if not os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip():
+            missing.append("AZURE_OPENAI_ENDPOINT")
+        if not os.environ.get("AZURE_OPENAI_API_KEY", "").strip():
+            missing.append("AZURE_OPENAI_API_KEY")
+        # Check model deployment env vars
+        model_vars_missing = []
+        for m in self._models:
+            if not os.environ.get(m.env_var, "").strip():
+                model_vars_missing.append(f"{m.env_var} (model: {m.handle})")
+        if model_vars_missing:
+            missing.extend(model_vars_missing)
+        detail = (
+            f"Missing: {', '.join(missing)}\n\n"
+            f"Add to your project's .env file:\n"
+            f"  AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/\n"
+            f"  AZURE_OPENAI_API_KEY=your-key\n"
+        )
+        if model_vars_missing:
+            detail += (
+                f"\nConfigure models in .kanbai/models.yml \n"
+                f"and set the deployment env vars in .env."
+            )
+        return "AI chat not configured", detail
 
     # ------------------------------------------------------------------
     # Public API
@@ -165,12 +199,7 @@ class ChatPanel:
 
         # Config warning banner (added to message list if AI is not configured)
         if not self._config_ok:
-            missing = []
-            import os
-            if not os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip():
-                missing.append("AZURE_OPENAI_ENDPOINT")
-            if not os.environ.get("AZURE_OPENAI_API_KEY", "").strip():
-                missing.append("AZURE_OPENAI_API_KEY")
+            warn_title, warn_detail = self._config_warning_text()
             self._msg_list.controls.append(
                 ft.Container(
                     content=ft.Column(
@@ -178,13 +207,12 @@ class ChatPanel:
                             ft.Row(
                                 [
                                     ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=16, color="#F0A742"),
-                                    ft.Text("AI chat not configured", size=12, weight=ft.FontWeight.BOLD, color="#F0A742"),
+                                    ft.Text(warn_title, size=12, weight=ft.FontWeight.BOLD, color="#F0A742"),
                                 ],
                                 spacing=6,
                             ),
                             ft.Text(
-                                f"Missing environment variables: {', '.join(missing)}\n"
-                                f"Add them to your project's .env file to enable the chat agent.",
+                                warn_detail,
                                 size=11,
                                 color="#8B949E",
                             ),
