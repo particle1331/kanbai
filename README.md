@@ -26,6 +26,7 @@ Kanbai lives **inside** your project as a `.kanbai/` directory. It provides:
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [AI Chat Setup](#ai-chat-setup)
 - [Usage Guide](#usage-guide)
   - [Initializing a Board](#initializing-a-board)
   - [Launching the Board](#launching-the-board)
@@ -81,6 +82,51 @@ kanbai
 That's it. Your project now has a `.kanbai/` directory with a full Kanban board.
 The board state is committed alongside your code — teammates who clone the repo
 get the board too.
+
+---
+
+## AI Chat Setup
+
+The board UI works out of the box, but the **in-app AI chat agent** requires
+an Azure OpenAI deployment. Create a `.env` file in your project root:
+
+```bash
+# .env — required for the kanbai chat agent
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-api-key-here
+```
+
+Then configure your model(s) in `.kanbai/models.yml`:
+
+```yaml
+# Each entry maps a display name to an env var holding the deployment name.
+models:
+  - handle: mini
+    env_var: AZURE_OPENAI_DEPLOYMENT_MINI
+  - handle: nano
+    env_var: AZURE_OPENAI_DEPLOYMENT_NANO
+```
+
+And set the deployment names in `.env`:
+
+```bash
+AZURE_OPENAI_DEPLOYMENT_MINI=gpt-4o-mini
+AZURE_OPENAI_DEPLOYMENT_NANO=gpt-4o-nano
+```
+
+Optional settings:
+
+```bash
+# Context window size for the ctx% indicator (default: 128000)
+KANBAI_CONTEXT_WINDOW=128000
+
+# Azure API version (default: 2025-04-01-preview)
+AZURE_OPENAI_API_VERSION=2025-04-01-preview
+```
+
+> **Note:** Only Azure OpenAI is supported as a provider currently. If the env
+> vars are missing, the chat panel will show a warning but the rest of the board
+> (kanban, health, graph, table, MCP) works normally.
 
 ---
 
