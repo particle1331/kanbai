@@ -1,7 +1,0 @@
-{
-  "use_local_tz": true,
-  "reasoning_effort": "none",
-  "max_completion_tokens": 4096,
-  "stream_response": true,
-  "max_agent_steps": 8
-}
