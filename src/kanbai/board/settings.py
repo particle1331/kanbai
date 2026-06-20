@@ -25,14 +25,18 @@ class ModelDef:
 
 
 def load_models() -> list[ModelDef]:
-    """Load model definitions from board_data/models.yml.
+    """Load model definitions from .kanbai/models.yml.
 
-    Raises RuntimeError if the file is missing, invalid, or contains no entries.
+    Returns a single fallback model if the file is missing or has no entries,
+    so the UI can always render (chat just won't work without valid config).
     """
+    _FALLBACK = [ModelDef(handle="default", env_var="OPENAI_MODEL")]
+    if not MODELS_CONFIG_PATH.exists():
+        return _FALLBACK
     try:
         raw = yaml.safe_load(MODELS_CONFIG_PATH.read_text(encoding="utf-8")) or {}
-    except OSError as exc:
-        raise RuntimeError(f"Cannot read {MODELS_CONFIG_PATH}: {exc}") from exc
+    except OSError:
+        return _FALLBACK
     entries = raw.get("models") or []
     defs = []
     for e in entries:
@@ -40,13 +44,9 @@ def load_models() -> list[ModelDef]:
             continue
         handle = str(e["handle"])
         if len(handle) >= 16:
-            raise RuntimeError(
-                f"{MODELS_CONFIG_PATH}: handle {handle!r} must be fewer than 16 characters."
-            )
+            continue
         defs.append(ModelDef(handle=handle, env_var=str(e["env_var"])))
-    if not defs:
-        raise RuntimeError(f"{MODELS_CONFIG_PATH} contains no valid model entries.")
-    return defs
+    return defs if defs else _FALLBACK
 
 
 def find_model(handle: str, models: Sequence[ModelDef] | None = None) -> ModelDef:

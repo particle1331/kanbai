@@ -175,6 +175,16 @@ def init(
     # transitions log
     (kanbai_dir / "transitions.jsonl").write_text("")
 
+    # models.yml — AI model config (chat panel)
+    (kanbai_dir / "models.yml").write_text(
+        "# AI models for the kanbai chat panel.\n"
+        "# Each entry maps a display handle to an env var holding the model/deployment name.\n"
+        "# The chat panel won't work until at least one valid model is configured.\n"
+        "models:\n"
+        "  - handle: default\n"
+        "    env_var: OPENAI_MODEL\n"
+    )
+
     typer.echo(f"✓ Initialized kanbai board in {kanbai_dir}")
     if no_git:
         typer.echo("  Git tracking: disabled")
