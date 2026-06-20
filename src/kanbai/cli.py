@@ -18,9 +18,33 @@ import typer
 app = typer.Typer(
     name="kanbai",
     help="AI-powered Kanban board — per-repo sidecar for humans and agents.",
-    no_args_is_help=True,
+    no_args_is_help=False,
     add_completion=False,
+    invoke_without_command=True,
 )
+
+
+@app.callback(invoke_without_command=True)
+def _default(ctx: typer.Context) -> None:
+    """When no subcommand is given, launch the board (equivalent to `kanbai serve`)."""
+    if ctx.invoked_subcommand is None:
+        # Check if .kanbai/ exists; if not, show help
+        root = find_kanbai_root()
+        if root is None:
+            typer.echo(
+                "No .kanbai/ found. Run 'kanbai init' first, or 'kanbai --help' for commands.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        _set_project_env(root)
+        from dotenv import load_dotenv
+        env_file = root / ".env"
+        if env_file.exists():
+            load_dotenv(env_file)
+        typer.echo(f"[kanbai] project: {root}")
+        typer.echo(f"[kanbai] UI: http://localhost:8765")
+        typer.echo(f"[kanbai] MCP (SSE): http://localhost:3001/sse")
+        _run_ui_and_mcp(root, 8765, 3001)
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────────
