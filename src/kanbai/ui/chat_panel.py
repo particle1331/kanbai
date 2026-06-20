@@ -22,7 +22,16 @@ class ChatPanel:
         self._model: ModelDef = self._models[0]
         self._busy = False   # guards against re-entrant / double sends
         self._build()
+        # Check AI config and show warning if needed
+        self._config_ok = self._check_ai_config()
         threading.Thread(target=agent_chat.warm_up, daemon=True).start()
+
+    def _check_ai_config(self) -> bool:
+        """Return True if AI chat is properly configured."""
+        import os
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
+        api_key = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
+        return bool(endpoint and api_key)
 
     # ------------------------------------------------------------------
     # Public API
@@ -153,6 +162,42 @@ class ChatPanel:
             border=ft.Border(bottom=ft.BorderSide(1, "#30363D")),
         )
         self._render_mode_pills()
+
+        # Config warning banner (added to message list if AI is not configured)
+        if not self._config_ok:
+            missing = []
+            import os
+            if not os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip():
+                missing.append("AZURE_OPENAI_ENDPOINT")
+            if not os.environ.get("AZURE_OPENAI_API_KEY", "").strip():
+                missing.append("AZURE_OPENAI_API_KEY")
+            self._msg_list.controls.append(
+                ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=16, color="#F0A742"),
+                                    ft.Text("AI chat not configured", size=12, weight=ft.FontWeight.BOLD, color="#F0A742"),
+                                ],
+                                spacing=6,
+                            ),
+                            ft.Text(
+                                f"Missing environment variables: {', '.join(missing)}\n"
+                                f"Add them to your project's .env file to enable the chat agent.",
+                                size=11,
+                                color="#8B949E",
+                            ),
+                        ],
+                        spacing=4,
+                        tight=True,
+                    ),
+                    bgcolor="#2A2200",
+                    border_radius=8,
+                    padding=ft.Padding(12, 10, 12, 10),
+                    margin=ft.Margin(10, 8, 10, 4),
+                )
+            )
 
         panel = ft.Container(
             content=ft.Column(
