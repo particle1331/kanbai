@@ -239,6 +239,7 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
+    # ------------------------------------------------------------------ Dialog
     def _close(_e) -> None:
         dlg.open = False
         page.update()
@@ -263,11 +264,17 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
                     tokens_row,
                     steps_row,
                     stream_row,
+                    ft.Divider(height=16, color="#30363D"),
+                    ft.Text("Usage", size=11, color=_TEXT_SECONDARY, weight=ft.FontWeight.W_600),
+                    usage_header_row,
+                    usage_column,
                 ],
                 spacing=10,
                 tight=True,
+                scroll=ft.ScrollMode.AUTO,
             ),
             width=380,
+            height=440,
             padding=ft.Padding(0, 8, 0, 0),
         ),
         actions=[ft.TextButton("Close", on_click=_close)],

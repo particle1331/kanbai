@@ -6,14 +6,30 @@ import base64
 import datetime as dt
 import io
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.dates as mdates
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-import logging
-logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
+# matplotlib is lazy-imported to speed up app startup
+_mpl_loaded = False
+mdates = None
+mpatches = None
+plt = None
+mticker = None
+
+def _ensure_matplotlib():
+    global _mpl_loaded, mdates, mpatches, plt, mticker
+    if _mpl_loaded:
+        return
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.dates as _mdates
+    import matplotlib.patches as _mpatches
+    import matplotlib.pyplot as _plt
+    import matplotlib.ticker as _mticker
+    import logging
+    logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
+    mdates = _mdates
+    mpatches = _mpatches
+    plt = _plt
+    mticker = _mticker
+    _mpl_loaded = True
 
 import flet as ft
 import flet_charts as fch
@@ -1920,6 +1936,7 @@ class HealthPage:
             for r in series
         ]
 
+        _ensure_matplotlib()
         with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(7.5, 2.8))
             fig.patch.set_facecolor(_MPL_BG)
@@ -2005,6 +2022,7 @@ class HealthPage:
         ]
         wip_vals = [r["wip"] for r in series]
 
+        _ensure_matplotlib()
         with plt.style.context("dark_background"):
             fig, ax1 = plt.subplots(figsize=(7.5, 2.8))
             fig.patch.set_facecolor(_MPL_BG)
@@ -2406,6 +2424,7 @@ class HealthPage:
         sampled = series[::step]
         sdates  = [datetime.strptime(r["date"], "%Y-%m-%d") for r in sampled]
 
+        _ensure_matplotlib()
         with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(3.0, 1.8))
             fig.patch.set_facecolor(_MPL_BG)
@@ -2443,6 +2462,7 @@ class HealthPage:
         p25s    = [r["p25_age"] for r in filtered]
         p75s    = [r["p75_age"] for r in filtered]
 
+        _ensure_matplotlib()
         with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(7.5, 2.8))
             fig.patch.set_facecolor(_MPL_BG)
@@ -2495,6 +2515,7 @@ class HealthPage:
         dates = [datetime.strptime(r["date"], "%Y-%m-%d") for r in cfd]
         _STATUS = _theme.STATUS_COLORS
 
+        _ensure_matplotlib()
         with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(7.5, 2.8))
             fig.patch.set_facecolor(_MPL_BG)
@@ -2548,6 +2569,7 @@ class HealthPage:
         p25s    = [r["p25"] if r["p25"] is not None else r["median"] for r in filtered]
         p75s    = [r["p75"] if r["p75"] is not None else r["median"] for r in filtered]
 
+        _ensure_matplotlib()
         with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(7.5, 2.8))
             fig.patch.set_facecolor(_MPL_BG)
@@ -2600,6 +2622,7 @@ class HealthPage:
         values     = [hist.get(k, 0) for k in keys]
         bar_colors = [_GREEN, _GREEN, _GREEN, _AMBER, _AMBER, _RED]
 
+        _ensure_matplotlib()
         with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(7.5, 2.8))
             fig.patch.set_facecolor(_MPL_BG)
@@ -2647,6 +2670,7 @@ class HealthPage:
         vals = [data[k] for k in keys]
         clrs = [colors.get(k, _TEXT_DIM) for k in keys]
 
+        _ensure_matplotlib()
         with plt.style.context("dark_background"):
             fig, ax = plt.subplots(figsize=(1.8, 1.8))
             fig.patch.set_facecolor(_MPL_BG)

@@ -60,7 +60,7 @@ class _BoardChangeHandler(FileSystemEventHandler):
         src = event.src_path
         if src.endswith((".md", ".json", ".jsonl")):
             # Ignore .cache.db and ui_state.json
-            if ".cache.db" in src or "ui_state.json" in src:
+            if ".cache.db" in src or "ui_state.json" in src or "settings.json" in src:
                 return
             self._schedule()
 

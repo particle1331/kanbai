@@ -6,7 +6,6 @@ import time
 
 import flet as ft
 
-from kanbai.agent import chat as agent_chat
 from kanbai.board import settings as _settings
 from kanbai.board.settings import ModelDef, load_models, find_model
 
@@ -23,7 +22,10 @@ class ChatPanel:
         self._busy = False   # guards against re-entrant / double sends
         self._config_ok = self._check_ai_config()
         self._build()
-        threading.Thread(target=agent_chat.warm_up, daemon=True).start()
+        def _warm():
+            from kanbai.agent import chat as agent_chat
+            agent_chat.warm_up()
+        threading.Thread(target=_warm, daemon=True).start()
 
     def _check_ai_config(self) -> bool:
         """Return True if AI chat is properly configured."""
@@ -154,6 +156,14 @@ class ChatPanel:
             text_align=ft.TextAlign.CENTER,
             tooltip="0 / 0 tokens",
         )
+        self._ctx_container = ft.Container(
+            content=self._ctx_text,
+            on_click=self._open_token_usage_popup,
+            border_radius=4,
+            ink=True,
+            tooltip="Click to view token usage",
+            padding=ft.Padding(4, 2, 4, 2),
+        )
         self._reset_btn = ft.IconButton(
             ft.Icons.REFRESH_ROUNDED,
             icon_size=15,
@@ -167,7 +177,7 @@ class ChatPanel:
                 [
                     ft.Row(list(self._mode_pills.values()), spacing=2, tight=True),
                     ft.Row(
-                        [self._model_dd, self._ctx_text, self._reset_btn],
+                        [self._model_dd, self._ctx_container, self._reset_btn],
                         spacing=4,
                         tight=True,
                     ),
@@ -444,6 +454,7 @@ class ChatPanel:
         self._msg_list.update()
         threading.Thread(target=self._animate_dots, daemon=True).start()
 
+        meta: dict = {}
         try:
             _settings.reload()
             # Per-turn streaming state
@@ -483,6 +494,7 @@ class ChatPanel:
                 if name in _WRITE_NAMES and base_board_refresh:
                     threading.Thread(target=base_board_refresh, daemon=True).start()
 
+            from kanbai.agent import chat as agent_chat
             reply, updated, meta = agent_chat.chat(
                 self._messages, mode=self._mode, model=self._model,
                 on_token=_on_token,
@@ -528,6 +540,15 @@ class ChatPanel:
                 except Exception:
                     pass
             self._update_ctx(meta)
+            # Persist cumulative token usage for this model.
+            try:
+                _settings.add_token_usage(
+                    self._model.handle,
+                    meta.get("prompt_tokens", 0),
+                    meta.get("completion_tokens", 0),
+                )
+            except Exception:
+                pass
         except Exception as ex:
             self._add_bubble("assistant", f"\u26a0 {ex}")
         finally:
@@ -716,6 +737,146 @@ class ChatPanel:
         except Exception:
             pass
         return txt, bubble
+
+    def _open_token_usage_popup(self, e=None) -> None:
+        """Open a small dialog showing cumulative token usage per model."""
+        _TEXT_PRIMARY   = "#E6EDF3"
+        _TEXT_SECONDARY = "#8B949E"
+
+        def _bar_color(ratio: float) -> str:
+            if ratio >= 1.0:
+                return "#F85149"
+            if ratio >= 0.8:
+                return "#F0A742"
+            return "#58A6FF"
+
+        def _fmt(n: int) -> str:
+            if n >= 1_000_000:
+                s = f"{n / 1_000_000:.2f}".rstrip("0").rstrip(".")
+                return f"{s}M"
+            if n >= 1_000:
+                s = f"{n / 1_000:.1f}".rstrip("0").rstrip(".")
+                return f"{s}k"
+            return str(n)
+
+        def _build_rows() -> list[ft.Control]:
+            all_models = _settings.load_models()
+            usage      = _settings.get_all_token_usage()
+            rows: list[ft.Control] = []
+            for model in all_models:
+                handle     = model.handle
+                counts     = usage.get(handle, {})
+                prompt     = counts.get("prompt_tokens", 0)
+                completion = counts.get("completion_tokens", 0)
+                limit_in   = _settings.token_spend_limit(handle)
+                limit_out  = max(1, limit_in // 10)
+                r_in  = min(prompt     / limit_in,  1.0) if limit_in  else 0.0
+                r_out = min(completion / limit_out, 1.0) if limit_out else 0.0
+                rows.append(
+                    ft.Column(
+                        [
+                            ft.Text(handle, size=12, weight=ft.FontWeight.W_600, color=_TEXT_PRIMARY),
+                            ft.Row(
+                                [
+                                    ft.Text("in ", size=10, color=_TEXT_SECONDARY, width=20),
+                                    ft.ProgressBar(
+                                        value=r_in, color=_bar_color(r_in),
+                                        bgcolor="#21262D", expand=True, height=6, border_radius=3,
+                                    ),
+                                    ft.Text(
+                                        f"{_fmt(prompt)} / {_fmt(limit_in)}",
+                                        size=10, color=_TEXT_SECONDARY,
+                                        width=100, text_align=ft.TextAlign.RIGHT,
+                                    ),
+                                ],
+                                spacing=6,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            ft.Row(
+                                [
+                                    ft.Text("out", size=10, color=_TEXT_SECONDARY, width=20),
+                                    ft.ProgressBar(
+                                        value=r_out, color=_bar_color(r_out),
+                                        bgcolor="#21262D", expand=True, height=6, border_radius=3,
+                                    ),
+                                    ft.Text(
+                                        f"{_fmt(completion)} / {_fmt(limit_out)}",
+                                        size=10, color=_TEXT_SECONDARY,
+                                        width=100, text_align=ft.TextAlign.RIGHT,
+                                    ),
+                                ],
+                                spacing=6,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                        ],
+                        spacing=4,
+                        tight=True,
+                    )
+                )
+            return rows
+
+        usage_col = ft.Column(_build_rows(), spacing=10, tight=True)
+
+        def _on_reset(_e) -> None:
+            _settings.reset_token_usage()
+            usage_col.controls = _build_rows()
+            self.page.update()
+
+        def _close(_e) -> None:
+            dlg.open = False
+            self.page.update()
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row(
+                [
+                    ft.Icon(ft.Icons.QUERY_STATS, size=16, color=_TEXT_PRIMARY),
+                    ft.Text("Token usage", size=15, weight=ft.FontWeight.W_600),
+                ],
+                spacing=8,
+            ),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "Cumulative tokens per model*",
+                            size=11,
+                            color=_TEXT_SECONDARY,
+                        ),
+                        ft.Divider(height=12, color="#30363D"),
+                        usage_col,
+                        ft.Divider(height=12, color="#30363D"),
+                        ft.Text(
+                            "* Limit set via KANBAI_TOKEN_SPEND_LIMIT_<MODEL>",
+                            size=10,
+                            color="#636E7A",
+                            italic=True,
+                        ),
+                    ],
+                    spacing=8,
+                    tight=True,
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                width=360,
+                height=360,
+                padding=ft.Padding(0, 4, 0, 0),
+            ),
+            actions=[
+                ft.TextButton(
+                    "Reset all",
+                    on_click=_on_reset,
+                    style=ft.ButtonStyle(
+                        color={ft.ControlState.DEFAULT: "#F85149"},
+                        overlay_color={ft.ControlState.HOVERED: "#3D1F1F"},
+                    ),
+                ),
+                ft.TextButton("Close", on_click=_close),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self.page.overlay.append(dlg)
+        dlg.open = True
+        self.page.update()
 
     def _reset_context(self, e=None) -> None:
         if not self._messages:

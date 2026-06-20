@@ -12,12 +12,8 @@ def run_app(port: int = 8765) -> None:
     from kanbai import paths
     from kanbai.board.storage.sync import full_sync
     from kanbai.ui.card_dialog import open_create_dialog, open_edit_dialog
-    from kanbai.ui.chat_panel import ChatPanel
     from kanbai.ui.search_overlay import open_search_overlay
     from kanbai.ui.kanban_page import KanbanPage
-    from kanbai.ui.table_page import TablePage
-    from kanbai.ui.health_page import HealthPage
-    from kanbai.ui.graph_page import GraphPage
     from kanbai.ui.settings_dialog import open_settings_dialog
 
     async def app(page: ft.Page) -> None:
@@ -52,13 +48,13 @@ def run_app(port: int = 8765) -> None:
 
                 def on_updated(cid, col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh() if table_pg else None, health_pg.refresh() if health_pg else None, _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
                 def on_moved(cid, old_col, new_col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh() if table_pg else None, health_pg.refresh() if health_pg else None, _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
                 def on_archived(cid, col):
                     import threading
-                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh(), health_pg.refresh(), _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
+                    threading.Thread(target=lambda: (kanban.refresh_board(), table_pg.refresh() if table_pg else None, health_pg.refresh() if health_pg else None, _refresh_health_badge(), _refresh_git_status()), daemon=True).start()
                     _go_back()
 
                 open_edit_dialog(
@@ -268,8 +264,8 @@ def run_app(port: int = 8765) -> None:
                 _shared_epic["value"] = epic
                 _show_view("graph")
                 sidebar.selected_index = NAV_INDEX["graph"]
-                graph_pg.refresh_epics()
-                graph_pg.select_epic(epic)
+                _get_graph_pg().refresh_epics()
+                _get_graph_pg().select_epic(epic)
                 page.update()
 
             def show_board_for_epic(epic) -> None:
@@ -288,66 +284,105 @@ def run_app(port: int = 8765) -> None:
                 on_epic_change=_on_epic_changed,
                 on_open_search=lambda: open_search_overlay(page, on_open_card),
             )
-            table_pg = TablePage(page, on_open_card)
-            health_pg = HealthPage(
-                page,
-                on_open_card=on_open_card,
-                on_epic_change=_on_epic_changed,
-            )
-            graph_pg = GraphPage(
-                page,
-                on_open_card,
-                on_show_board=show_board_for_epic,
-                on_epic_change=_on_epic_changed,
-            )
+
+            # Lazy-loaded pages — only imported/built on first navigation
+            table_pg = None
+            health_pg = None
+            graph_pg = None
+
+            def _get_table_pg():
+                nonlocal table_pg
+                if table_pg is None:
+                    from kanbai.ui.table_page import TablePage
+                    table_pg = TablePage(page, on_open_card)
+                return table_pg
+
+            def _get_health_pg():
+                nonlocal health_pg
+                if health_pg is None:
+                    from kanbai.ui.health_page import HealthPage
+                    health_pg = HealthPage(
+                        page,
+                        on_open_card=on_open_card,
+                        on_epic_change=_on_epic_changed,
+                    )
+                return health_pg
+
+            def _get_graph_pg():
+                nonlocal graph_pg
+                if graph_pg is None:
+                    from kanbai.ui.graph_page import GraphPage
+                    graph_pg = GraphPage(
+                        page,
+                        on_open_card,
+                        on_show_board=show_board_for_epic,
+                        on_epic_change=_on_epic_changed,
+                    )
+                return graph_pg
 
             kanban_view = kanban.build()
-            table_view = table_pg.build()
-            health_view = health_pg.build()
-            graph_view = graph_pg.build()
 
-            view_by_key = {
-                "board": kanban_view,
-                "health": health_view,
-                "graph": graph_view,
-                "table": table_view,
-            }
-            select_by_key = {
-                "board": kanban.select_epic,
-                "health": health_pg.select_epic,
-                "graph": graph_pg.select_epic,
-                "table": table_pg.select_epic,
-            }
+            # Lazy-built views: stored once built
+            _views_cache: dict[str, ft.Control] = {"board": kanban_view}
+            _current_view_key = "board"
+
+            # Content area that holds the active page
+            _content_area = ft.Container(content=kanban_view, expand=True)
 
             _saved_epic = _load_ui_state().get("last_epic")
             if _saved_epic:
                 _shared_epic["value"] = _saved_epic
-                for _sel_fn in select_by_key.values():
-                    _sel_fn(_saved_epic)
+                kanban.select_epic(_saved_epic)
 
-            for _key, _view in view_by_key.items():
-                _view.visible = (_key == "board")
+            def _ensure_view(key: str) -> ft.Control:
+                """Lazily build and cache a page view."""
+                if key in _views_cache:
+                    return _views_cache[key]
+                if key == "health":
+                    v = _get_health_pg().build()
+                elif key == "graph":
+                    v = _get_graph_pg().build()
+                elif key == "table":
+                    v = _get_table_pg().build()
+                else:
+                    v = kanban_view
+                _views_cache[key] = v
+                return v
 
             def _show_view(key: str) -> None:
-                for k, v in view_by_key.items():
-                    v.visible = (k == key)
+                nonlocal _current_view_key
+                _current_view_key = key
+                _content_area.content = _ensure_view(key)
+
+            def _select_epic_for(key: str, epic) -> None:
+                if key == "board":
+                    kanban.select_epic(epic)
+                elif key == "health" and health_pg:
+                    health_pg.select_epic(epic)
+                elif key == "graph" and graph_pg:
+                    graph_pg.select_epic(epic)
+                elif key == "table" and table_pg:
+                    table_pg.select_epic(epic)
 
             def on_board_change() -> None:
                 kanban.refresh_board()
                 kanban.refresh_epics()
-                table_pg.refresh()
-                graph_pg.refresh_epics()
+                if table_pg:
+                    table_pg.refresh()
+                if graph_pg:
+                    graph_pg.refresh_epics()
                 _refresh_health_badge()
                 _refresh_git_status()
 
+            from kanbai.ui.chat_panel import ChatPanel
             chat = ChatPanel(page, on_board_change=on_board_change)
 
             def on_nav_change(e) -> None:
                 idx = e.control.selected_index
                 key = NAV_ITEMS[idx][0]
                 _show_view(key)
-                select_by_key[key](_shared_epic["value"])
-                if key == "health":
+                _select_epic_for(key, _shared_epic["value"])
+                if key == "health" and health_pg:
                     health_pg.refresh()
                 page.update()
 
@@ -479,10 +514,7 @@ def run_app(port: int = 8765) -> None:
                     [
                         sidebar,
                         ft.VerticalDivider(width=1, color="#3E3E42"),
-                        kanban_view,
-                        health_view,
-                        graph_view,
-                        table_view,
+                        _content_area,
                     ],
                     spacing=0,
                     expand=True,
@@ -520,6 +552,7 @@ def run_app(port: int = 8765) -> None:
                     from kanbai.board.storage.sync import full_sync
                     full_sync()
                     on_board_change()
+                    page.update()
                 except Exception:
                     pass
 

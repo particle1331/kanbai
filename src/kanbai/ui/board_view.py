@@ -425,15 +425,24 @@ def _make_card_tile(
     wrapper = ft.Column([indicator, draggable], spacing=0, tight=True)
 
     def _on_will_accept(e) -> None:
-        indicator.bgcolor = "#58A6FF"
-        page.update()
+        try:
+            indicator.bgcolor = "#58A6FF"
+            page.update()
+        except RuntimeError:
+            pass
 
     def _on_leave(e) -> None:
-        indicator.bgcolor = "#00000000"
-        page.update()
+        try:
+            indicator.bgcolor = "#00000000"
+            page.update()
+        except RuntimeError:
+            pass
 
     def _on_accept(e) -> None:
-        indicator.bgcolor = "#00000000"
+        try:
+            indicator.bgcolor = "#00000000"
+        except RuntimeError:
+            pass
         src = e.src
         data = src.data if src is not None else None
         if not data:

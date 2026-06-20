@@ -102,6 +102,9 @@ _DEFAULTS: dict = {
     "stream_response": True,
     # Max model turns (each may issue tool calls) before control returns to the user.
     "max_agent_steps": 8,
+    # Cumulative token usage per model handle.
+    # Shape: {"<handle>": {"prompt_tokens": int, "completion_tokens": int}}
+    "token_usage": {},
 }
 
 # Ordered list of allowed max_completion_tokens values shown in the settings UI.
@@ -185,6 +188,92 @@ def stream_response() -> bool:
 
 def set_stream_response(value: bool) -> None:
     _load()["stream_response"] = bool(value)
+    _save()
+
+
+# ── Token usage tracking ───────────────────────────────────────────────────────
+
+def get_token_usage(model_handle: str) -> dict[str, int]:
+    """Return cumulative token counts for *model_handle*.
+
+    Returns a dict with ``prompt_tokens`` and ``completion_tokens`` (both int,
+    defaulting to 0 if not yet recorded).
+    """
+    usage: dict = _load().get("token_usage") or {}
+    entry = usage.get(model_handle) or {}
+    return {
+        "prompt_tokens": int(entry.get("prompt_tokens", 0)),
+        "completion_tokens": int(entry.get("completion_tokens", 0)),
+    }
+
+
+def get_all_token_usage() -> dict[str, dict[str, int]]:
+    """Return cumulative token counts for all tracked models.
+
+    Returns a dict keyed by model handle, each value having ``prompt_tokens``
+    and ``completion_tokens``.
+    """
+    raw: dict = _load().get("token_usage") or {}
+    return {
+        handle: {
+            "prompt_tokens": int(entry.get("prompt_tokens", 0)),
+            "completion_tokens": int(entry.get("completion_tokens", 0)),
+        }
+        for handle, entry in raw.items()
+    }
+
+
+def add_token_usage(model_handle: str, prompt_tokens: int, completion_tokens: int) -> None:
+    """Accumulate *prompt_tokens* and *completion_tokens* for *model_handle*.
+
+    Both values are clamped to >= 0 before being added so a bad API response
+    can never corrupt the running total.
+    """
+    cfg = _load()
+    usage: dict = cfg.setdefault("token_usage", {})
+    entry: dict = usage.setdefault(model_handle, {"prompt_tokens": 0, "completion_tokens": 0})
+    entry["prompt_tokens"] = int(entry.get("prompt_tokens", 0)) + max(0, int(prompt_tokens))
+    entry["completion_tokens"] = int(entry.get("completion_tokens", 0)) + max(0, int(completion_tokens))
+    _save()
+
+
+# Default output-token budget (in raw token count) when KANBAI_TOKEN_SPEND_LIMIT_<HANDLE>
+# is not set.  1 million tokens.
+_TOKEN_LIMIT_DEFAULT: int = 1_000_000
+
+
+def token_spend_limit(model_handle: str) -> int:
+    """Per-session output (completion) token budget for *model_handle*, in tokens.
+
+    Configured via ``KANBAI_TOKEN_SPEND_LIMIT_<HANDLE>`` (upper-cased handle), e.g.
+    ``KANBAI_TOKEN_SPEND_LIMIT_NANO=10`` for a 10 million input-token budget on
+    the ``nano`` model.  The value is interpreted as **millions** (float accepted),
+    so 0.5 means 500 000 tokens.  Falls back to ``_TOKEN_LIMIT_DEFAULT`` (1 M) when
+    the variable is absent or invalid.
+    The output (completion) budget is automatically 1/10× this value.
+    """
+    env_var = f"KANBAI_TOKEN_SPEND_LIMIT_{model_handle.upper()}"
+    raw = os.environ.get(env_var, "")
+    try:
+        millions = float(raw)
+        return max(1, int(millions * 1_000_000))
+    except (ValueError, TypeError):
+        return _TOKEN_LIMIT_DEFAULT
+
+
+def reset_token_usage(model_handle: str | None = None) -> None:
+    """Reset cumulative token counts.
+
+    If *model_handle* is given, only that model's counters are cleared.
+    If ``None``, all models are cleared.
+    """
+    cfg = _load()
+    if model_handle is None:
+        cfg["token_usage"] = {}
+    else:
+        usage: dict = cfg.get("token_usage") or {}
+        usage.pop(model_handle, None)
+        cfg["token_usage"] = usage
     _save()
 
 

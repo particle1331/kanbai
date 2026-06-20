@@ -248,8 +248,10 @@ def _run_ui_and_mcp(project_root: Path, ui_port: int, mcp_port: int) -> None:
     """Launch the Flet UI and MCP SSE server together."""
     import threading
 
-    # Start MCP SSE in a background thread
+    # Start MCP SSE in a background thread (delayed to avoid fighting Flet for CPU)
     def _mcp_sse():
+        import time
+        time.sleep(2)
         from kanbai.mcp_server.server import mcp
         mcp.run(transport="sse", port=mcp_port)
 
