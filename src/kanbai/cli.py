@@ -13,6 +13,8 @@ import os
 import sys
 from pathlib import Path
 
+import importlib.metadata
+
 import typer
 
 app = typer.Typer(
@@ -24,8 +26,23 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        version = importlib.metadata.version("kanbai")
+        typer.echo(f"kanbai {version}")
+        raise typer.Exit()
+
+
 @app.callback(invoke_without_command=True)
-def _default(ctx: typer.Context) -> None:
+def _default(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        None, "--version", "-v",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
     """When no subcommand is given, launch the board (equivalent to `kanbai serve`)."""
     if ctx.invoked_subcommand is None:
         # Check if .kanbai/ exists; if not, show help
