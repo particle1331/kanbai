@@ -185,6 +185,13 @@ def init(
         "    env_var: OPENAI_MODEL\n"
     )
 
+    # README.md — copy from kanbai package so users always have docs
+    from kanbai.paths import INSTALL_ROOT
+    pkg_readme = INSTALL_ROOT / "docs" / "README.md"
+    if pkg_readme.exists():
+        import shutil
+        shutil.copy2(pkg_readme, kanbai_dir / "README.md")
+
     typer.echo(f"✓ Initialized kanbai board in {kanbai_dir}")
     if no_git:
         typer.echo("  Git tracking: disabled")

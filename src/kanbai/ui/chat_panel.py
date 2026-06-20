@@ -44,8 +44,8 @@ class ChatPanel:
         return (
             "AI chat not configured",
             "The chat agent requires Azure OpenAI credentials and model\n"
-            "configuration. See the AI Chat Setup section in the README\n"
-            "for setup instructions.\n\n"
+            "configuration. See the AI Chat Setup section in\n"
+            ".kanbai/README.md for setup instructions.\n\n"
             "Required:\n"
             "  1. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env\n"
             "  2. Configure model deployments in .kanbai/models.yml\n"
