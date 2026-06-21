@@ -18,6 +18,7 @@ dependencies = [
   "fastapi[standard]>=0.136.3",
   "python-docx>=1.2.0",
   "watchdog>=4.0.0",
+  "pathspec>=1.1.1",
 ]
 
 [project.scripts]
@@ -28,6 +29,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 kanbai = ["docs/*.md"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=9.1.1",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]

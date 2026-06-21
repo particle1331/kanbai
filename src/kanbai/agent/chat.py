@@ -718,29 +718,48 @@ def _dispatch_tool(name: str, args: dict) -> str:
 
     if name == "list_files":
         from kanbai.paths import PROJECT_ROOT
+        from kanbai.agent.gitignore import GitignoreFilter
         import os
+        gi_filter = GitignoreFilter(PROJECT_ROOT)
         root = PROJECT_ROOT
         rel = args.get("path", "")
         if rel:
-            root = (PROJECT_ROOT / rel).resolve()
+            target = (PROJECT_ROOT / rel).resolve()
+            # Reject if the requested sub-path itself is gitignored
+            if gi_filter.is_ignored(target):
+                return json.dumps({"error": "access_denied", "path": rel,
+                                   "reason": "path is gitignored or outside the repo"})
+            root = target
         max_depth = int(args.get("depth", 3))
         lines: list[str] = []
         for dirpath, dirnames, filenames in os.walk(root):
-            # skip hidden dirs and common noise
-            dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".venv", "venv"))
-            depth = len(Path(dirpath).relative_to(root).parts)
+            cur_dir = Path(dirpath)
+            # skip hidden dirs, common noise, and gitignored dirs
+            dirnames[:] = sorted(
+                d for d in dirnames
+                if not d.startswith(".")
+                and d not in ("__pycache__", "node_modules", ".venv", "venv")
+                and not gi_filter.is_ignored(cur_dir / d)
+            )
+            depth = len(cur_dir.relative_to(root).parts)
             if depth >= max_depth:
                 dirnames.clear()
             indent = "  " * depth
-            lines.append(f"{indent}{Path(dirpath).name}/")
+            lines.append(f"{indent}{cur_dir.name}/")
             for fname in sorted(filenames):
-                if not fname.startswith("."):
+                if not fname.startswith(".") and not gi_filter.is_ignored(cur_dir / fname):
                     lines.append(f"{indent}  {fname}")
         return json.dumps({"tree": "\n".join(lines)})
 
     if name == "read_file":
         from kanbai.paths import PROJECT_ROOT
-        path = PROJECT_ROOT / args["path"]
+        from kanbai.agent.gitignore import GitignoreFilter
+        gi_filter = GitignoreFilter(PROJECT_ROOT)
+        path = (PROJECT_ROOT / args["path"]).resolve()
+        # Block access to gitignored or out-of-repo paths
+        if gi_filter.is_ignored(path):
+            return json.dumps({"error": "access_denied", "path": args["path"],
+                               "reason": "file is gitignored or outside the repo"})
         if not path.exists():
             return json.dumps({"error": "file_not_found", "path": args["path"]})
         max_lines = int(args.get("max_lines", 200))
