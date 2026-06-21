@@ -17,7 +17,7 @@ _SIDEBAR_WIDTH = 280
 from kanbai.board import epics as _epics
 from kanbai.board import operations
 from kanbai.board import settings
-from kanbai.board.models import LANE_LABELS, LANES
+from kanbai.board.models import Card, LANE_LABELS, LANES
 from kanbai.board.settings import DEFAULT_TAGS
 from kanbai.board.storage import sqlite_cache as _sc
 from kanbai.ui import avatar_color
@@ -388,6 +388,21 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
         _build_link_rows()
         page.update()
 
+    _prev_kb_handler_create = page.on_keyboard_event
+
+    def _restore_kb_create() -> None:
+        page.on_keyboard_event = _prev_kb_handler_create
+
+    def _on_key_create(e: ft.KeyboardEvent) -> None:
+        if e.key == "Escape":
+            _restore_kb_create()
+            page.pop_dialog()
+            return
+        if _prev_kb_handler_create:
+            _prev_kb_handler_create(e)
+
+    page.on_keyboard_event = _on_key_create
+
     def _save(e):
         if _saving[0]:
             return
@@ -418,10 +433,12 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
         if card.number is not None:
             for lk in pending_links:
                 operations.link_cards(card.number, lk["number"], lk["type"])
+        _restore_kb_create()
         page.pop_dialog()
         on_created(card)
 
     def _cancel(e):
+        _restore_kb_create()
         page.pop_dialog()
 
     rel_section = ft.Column(
@@ -508,9 +525,10 @@ def open_edit_dialog(
     open_card_fn=None,
     on_close=None,
 ) -> None:
-    card = operations.get_card(card_id)
-    if not card:
+    _raw_card = operations.get_card(card_id)
+    if not _raw_card:
         return
+    card: Card = _raw_card
 
     original_lane = card.lane
     current_links: list[dict] = list(card.links)
@@ -631,8 +649,11 @@ def open_edit_dialog(
                 nonlocal card
                 def _do() -> None:
                     nonlocal card
-                    operations.delete_comment(card_id, cid)
-                    card = operations.get_card(card_id) or card
+                    if cid is not None:
+                        operations.delete_comment(card_id, cid)
+                    _refreshed = operations.get_card(card_id)
+                    if _refreshed is not None:
+                        card = _refreshed
                     _build_comments()
                     page.update()
                 threading.Thread(target=_do, daemon=True).start()
@@ -681,7 +702,9 @@ def open_edit_dialog(
         def _do() -> None:
             nonlocal card
             operations.add_comment(card_id, txt)
-            card = operations.get_card(card_id) or card
+            _refreshed = operations.get_card(card_id)
+            if _refreshed is not None:
+                card = _refreshed
             comment_field.disabled = False
             _build_comments()
             page.update()
@@ -712,7 +735,7 @@ def open_edit_dialog(
         else:
             return f"{size_bytes / (1024 * 1024):.1f} MB"
 
-    def _ext_icon(filename: str) -> str:
+    def _ext_icon(filename: str) -> ft.IconData:
         ext = Path(filename).suffix.lower()
         if ext in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"}:
             return ft.Icons.IMAGE_OUTLINED
@@ -772,7 +795,9 @@ def open_edit_dialog(
                         page.update()
                         return
                     att_error.value = ""
-                    card = operations.get_card(card_id) or card
+                    _refreshed = operations.get_card(card_id)
+                    if _refreshed is not None:
+                        card = _refreshed
                     _build_attachments()
                     page.update()
 
@@ -837,9 +862,14 @@ def open_edit_dialog(
     def _pick_files(e) -> None:
         async def _do() -> None:
             nonlocal card
+            # In web mode (WEB_BROWSER view) the browser JS client cannot
+            # expose server-side file paths, so f.path is always None.
+            # Request raw bytes instead so we can write the file ourselves.
+            use_bytes = page.web
             files = await file_picker.pick_files(
                 dialog_title="Attach files to card",
                 allow_multiple=True,
+                with_data=use_bytes,
             )
             if not files:
                 return
@@ -847,10 +877,17 @@ def open_edit_dialog(
             for f in files:
                 if f.path:
                     err = operations.add_attachment(card_id, f.path)
-                    if err:
-                        errors.append(err)
+                elif f.bytes is not None:
+                    err = operations.add_attachment_bytes(card_id, f.name, f.bytes)
+                else:
+                    errors.append(f"{f.name}: no file data available")
+                    continue
+                if err:
+                    errors.append(err)
             att_error.value = "; ".join(errors) if errors else ""
-            card = operations.get_card(card_id) or card
+            _refreshed = operations.get_card(card_id)
+            if _refreshed is not None:
+                card = _refreshed
             _build_attachments()
             page.update()
 
@@ -882,6 +919,8 @@ def open_edit_dialog(
 
             def _open_linked(e, tid=target_id) -> None:
                 if tid and open_card_fn:
+                    _cleanup_picker()
+                    _restore_kb()
                     page.pop_dialog()
                     open_card_fn(tid)
 
@@ -1090,16 +1129,44 @@ def open_edit_dialog(
         else:
             on_updated(card_id, original_lane)
         # Re-read updated card and return to view mode
-        card = operations.get_card(card_id) or card
+        _refreshed = operations.get_card(card_id)
+        if _refreshed is not None:
+            card = _refreshed
         _render("view")
 
     def _cleanup_picker() -> None:
         """No-op: FilePicker is a Service and auto-unregisters when unreferenced."""
         pass
 
+    # ── ESC / keyboard handler ─────────────────────────────────────────
+    _prev_kb_handler = page.on_keyboard_event
+    _current_mode: list[str] = ["view"]
+
+    def _restore_kb() -> None:
+        page.on_keyboard_event = _prev_kb_handler
+
+    def _on_key(e: ft.KeyboardEvent) -> None:
+        if e.key == "Escape":
+            if _current_mode[0] == "edit":
+                # In edit mode: ESC cancels edits and returns to view
+                _render("view")
+            else:
+                # In view mode: ESC closes the dialog
+                _cleanup_picker()
+                _restore_kb()
+                page.pop_dialog()
+                if on_close:
+                    on_close()
+            return
+        if _prev_kb_handler:
+            _prev_kb_handler(e)  # type: ignore[call-arg]
+
+    page.on_keyboard_event = _on_key
+
     def _archive(e) -> None:
         operations.archive_card(card_id)
         _cleanup_picker()
+        _restore_kb()
         page.pop_dialog()
         on_archived(card_id, original_lane)
 
@@ -1111,6 +1178,7 @@ def open_edit_dialog(
             page.update()
             return
         _cleanup_picker()
+        _restore_kb()
         page.pop_dialog()
         on_archived(card_id, original_lane)
 
@@ -1120,6 +1188,7 @@ def open_edit_dialog(
             ok = operations.delete_card(card_id)
             if ok:
                 _cleanup_picker()
+                _restore_kb()
                 page.pop_dialog()  # close card dialog
                 on_archived(card_id, original_lane)
 
@@ -1135,6 +1204,7 @@ def open_edit_dialog(
 
     def _close(e) -> None:
         _cleanup_picker()
+        _restore_kb()
         page.pop_dialog()
         if on_close:
             on_close()
@@ -1142,6 +1212,7 @@ def open_edit_dialog(
     def _view_relationships() -> None:
         from kanbai.ui.graph_page import open_graph_dialog
         _cleanup_picker()
+        _restore_kb()
         page.pop_dialog()
 
         def _restore_card_dialog() -> None:
@@ -1462,6 +1533,7 @@ def open_edit_dialog(
         )
 
     def _render(m: str) -> None:
+        _current_mode[0] = m
         op_error.value = ""
         num_str = f"  #{card.number}" if card.number else ""
         if m == "view":

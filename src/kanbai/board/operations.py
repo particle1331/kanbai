@@ -137,29 +137,30 @@ def update_card(
     assigned_to: list[str] | None = None,
     due_date=_UNSET,
 ) -> Card | None:
+    from kanbai.board.models import _Unset as _UnsetT  # local import avoids private-export lint
     _validation.validate_card_fields(
         title=title,
         description=description,
         tags=tags,
         assigned_to=assigned_to,
-        epic=epic if epic is not _UNSET else None,
+        epic=None if isinstance(epic, _UnsetT) else epic,  # type: ignore[arg-type]
     )
-    if due_date is not _UNSET:
-        _validation.validate_due_date(due_date)
+    if not isinstance(due_date, _UnsetT):
+        _validation.validate_due_date(due_date)  # type: ignore[arg-type]
     card = markdown_store.read_card(card_id)
     if not card:
         return None
-    if epic is not _UNSET and epic and not _epics.epic_exists(epic):
+    if not isinstance(epic, _UnsetT) and epic and not _epics.epic_exists(epic):  # type: ignore[arg-type]
         raise EpicNotFoundError(
             f"Epic '{epic}' does not exist — create it first with create_epic."
         )
-    if epic is not _UNSET and epic and not card.archived and _epics.is_epic_archived(epic):
+    if not isinstance(epic, _UnsetT) and epic and not card.archived and _epics.is_epic_archived(epic):  # type: ignore[arg-type]
         raise EpicArchivedError(
             f"Epic '{epic}' is archived — unarchive it before assigning active cards."
         )
-    if epic is not _UNSET and not card.archived and (epic or None) != (card.epic or None):
+    if not isinstance(epic, _UnsetT) and not card.archived and (epic or None) != (card.epic or None):
         _bucket = epic or "Unassigned"
-        if sqlite_cache.count_cards_in_epic(epic or None) >= _validation.MAX_CARDS_PER_EPIC:
+        if sqlite_cache.count_cards_in_epic(epic or None) >= _validation.MAX_CARDS_PER_EPIC:  # type: ignore[arg-type]
             raise ValueError(
                 f"'{_bucket}' already has the maximum of "
                 f"{_validation.MAX_CARDS_PER_EPIC} active cards."
@@ -172,12 +173,12 @@ def update_card(
         card.tags = tags
     if priority is not None:
         card.priority = priority
-    if epic is not _UNSET:
-        card.epic = epic
+    if not isinstance(epic, _UnsetT):
+        card.epic = epic  # type: ignore[assignment]
     if assigned_to is not None:
         card.assigned_to = _dedup_ci(assigned_to)
-    if due_date is not _UNSET:
-        card.due_date = due_date or None
+    if not isinstance(due_date, _UnsetT):
+        card.due_date = due_date or None  # type: ignore[assignment]
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
@@ -474,6 +475,58 @@ def add_attachment(card_id: str, src_path: str) -> str | None:
 
     shutil.copy2(src_path, str(dest))
     card.attachments.append(filename)
+    card.updated_at = _now()
+    markdown_store.write_card(card)
+    sqlite_cache.upsert_card(card)
+    return None
+
+
+def add_attachment_bytes(card_id: str, filename: str, data: bytes) -> str | None:
+    """Write *data* as an attachment without requiring a local file path.
+
+    Used in web mode (``page.web = True``) where ``FilePicker`` returns file
+    bytes instead of a server-side path.
+
+    Returns an error string on failure, or ``None`` on success.
+    """
+    card = markdown_store.read_card(card_id)
+    if not card:
+        return "Card not found."
+
+    # Reuse the extension-block and count limits from validate_attachment,
+    # skipping the existence / size checks (we already have the bytes).
+    from pathlib import Path as _Path
+    p = _Path(filename)
+    ext = p.suffix.lower()
+    if ext in _validation.BLOCKED_EXTENSIONS:
+        return f"File type '{ext}' is not allowed for security reasons."
+    if len(card.attachments) >= _validation.MAX_ATTACHMENTS:
+        return f"attachments: maximum {_validation.MAX_ATTACHMENTS} attachments per card."
+    size_mb = len(data) / (1024 * 1024)
+    if size_mb > _validation.MAX_ATTACHMENT_SIZE_MB:
+        return (
+            f"File is too large ({size_mb:.1f} MB). "
+            f"Maximum is {_validation.MAX_ATTACHMENT_SIZE_MB} MB."
+        )
+
+    safe_name = _sanitize_filename(filename)
+    att_dir = get_attachment_dir(card_id)
+    att_dir.mkdir(parents=True, exist_ok=True)
+    dest = att_dir / safe_name
+
+    if dest.exists():
+        stem, suffix = _Path(safe_name).stem, _Path(safe_name).suffix
+        for i in range(1, 1000):
+            candidate = att_dir / f"{stem}_{i}{suffix}"
+            if not candidate.exists():
+                dest = candidate
+                safe_name = dest.name
+                break
+        else:
+            return "Could not find a unique filename for the attachment."
+
+    dest.write_bytes(data)
+    card.attachments.append(safe_name)
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)

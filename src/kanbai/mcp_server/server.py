@@ -1,12 +1,40 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
+from typing import Callable
 
 from fastmcp import FastMCP
 
 from kanbai.board import epics as _epics
 from kanbai.board import operations
+
+# ── Direct board-refresh hook ────────────────────────────────────────────────
+# When the MCP server runs in the same process as the Flet UI (kanbai serve),
+# this callback lets write tools immediately refresh the board without waiting
+# for the file-watcher debounce (~1 second delay).
+_board_refresh_callback: Callable[[], None] | None = None
+
+
+def register_board_refresh(callback: Callable[[], None]) -> None:
+    """Register a callback to be called after any board-mutating MCP tool.
+
+    Called by the Flet app so that in-process MCP mutations (SSE transport)
+    trigger an immediate UI refresh instead of waiting ~1 s for the watcher.
+    The callback is run in a daemon thread so it never blocks the MCP response.
+    """
+    global _board_refresh_callback
+    _board_refresh_callback = callback
+
+
+def _notify_board_changed() -> None:
+    """Fire the registered refresh callback (if any) in a background thread."""
+    cb = _board_refresh_callback
+    if cb is None:
+        return
+    threading.Thread(target=cb, daemon=True).start()
+
 
 mcp = FastMCP(
     "kanbai",
@@ -15,7 +43,18 @@ mcp = FastMCP(
         "Use the tools to manage cards across lanes (backlog, in_progress, review, done). "
         "Call list_docs to discover available documentation (kanban principles, flow metrics, etc.) "
         "and get_doc to read the full content of any doc. "
-        "Always consult the kanban principles before making board decisions."
+        "Always consult the kanban principles before making board decisions.\n\n"
+        "WORKFLOW DISCIPLINE (mandatory):\n"
+        "1. PICK UP — when you start work on a card, immediately move it to in_progress "
+        "using move_card before doing any other work on it.\n"
+        "2. HAND OFF — when you finish the work, move the card to review so the user "
+        "can evaluate the result before it is closed.\n"
+        "3. UPDATE DESCRIPTION — before moving to review, update the card description "
+        "to include a brief summary of what you found (root cause / analysis) and what "
+        "you did (the fix / change), so the reviewer has full context without needing "
+        "to read the diff or conversation history.\n"
+        "Never skip these transitions. backlog → in_progress → review is the expected "
+        "path for every piece of agent-driven work."
     ),
 )
 
@@ -54,6 +93,7 @@ def create_card(
 ) -> dict:
     """Create a new card on the Kanban board. lane must be one of: backlog, in_progress, review, done. due_date is an optional YYYY-MM-DD deadline."""
     card = operations.create_card(title, lane, description, tags, priority, epic=epic, due_date=due_date)
+    _notify_board_changed()
     return {"id": card.id, "number": card.number, "title": card.title, "lane": card.lane, "epic": card.epic, "due_date": card.due_date}
 
 
@@ -117,6 +157,7 @@ def update_card(
     card = operations.update_card(card_id, title, description, tags, priority, epic=epic_arg, due_date=due_arg)
     if not card:
         return None
+    _notify_board_changed()
     return {"id": card.id, "title": card.title, "lane": card.lane, "updated_at": card.updated_at, "due_date": card.due_date}
 
 
@@ -126,6 +167,7 @@ def move_card(card_id: str, target_lane: str) -> dict | None:
     card = operations.move_card(card_id, target_lane)
     if not card:
         return None
+    _notify_board_changed()
     return {"id": card.id, "lane": card.lane}
 
 
@@ -135,6 +177,7 @@ def archive_card(card_id: str) -> dict | None:
     card = operations.archive_card(card_id)
     if not card:
         return None
+    _notify_board_changed()
     return {"id": card.id, "archived": card.archived}
 
 
@@ -144,6 +187,7 @@ def unarchive_card(card_id: str) -> dict | None:
     card = operations.unarchive_card(card_id)
     if not card:
         return None
+    _notify_board_changed()
     return {"id": card.id, "archived": card.archived}
 
 
@@ -151,6 +195,8 @@ def unarchive_card(card_id: str) -> dict | None:
 def delete_card(card_id: str) -> dict:
     """Permanently delete a card. The card MUST be archived first. Irreversible."""
     ok = operations.delete_card(card_id)
+    if ok:
+        _notify_board_changed()
     return {"deleted": ok, "error": None if ok else "not_found_or_not_archived"}
 
 
@@ -168,6 +214,8 @@ def set_card_epic(card_number: int, epic: str | None = None) -> dict:
     if not row:
         return {"error": f"Card #{card_number} not found"}
     card = operations.update_card(row["id"], epic=epic)
+    if card:
+        _notify_board_changed()
     return {"updated": bool(card)}
 
 
@@ -175,6 +223,7 @@ def set_card_epic(card_number: int, epic: str | None = None) -> dict:
 def archive_epic(epic_name: str) -> dict:
     """Archive an epic and all its active cards."""
     count = operations.archive_epic_op(epic_name)
+    _notify_board_changed()
     return {"archived_cards": count}
 
 
@@ -182,6 +231,7 @@ def archive_epic(epic_name: str) -> dict:
 def unarchive_epic(epic_name: str) -> dict:
     """Restore an archived epic and its snapshotted cards."""
     count = operations.unarchive_epic_op(epic_name)
+    _notify_board_changed()
     return {"restored_cards": count}
 
 
@@ -191,6 +241,7 @@ def create_epic(name: str, description: str = "") -> dict:
     if _epics.epic_exists(name):
         return {"error": f"Epic '{name}' already exists."}
     _epics.create_epic(name, description)
+    _notify_board_changed()
     return {"created": name}
 
 
@@ -209,6 +260,7 @@ def set_epic_description(epic_name: str, description: str) -> dict:
         return {"error": str(ex)}
     if not ok:
         return {"error": f"Epic '{epic_name}' not found."}
+    _notify_board_changed()
     return {"updated": True}
 
 
@@ -221,6 +273,7 @@ def add_epic_comment(epic_name: str, text: str) -> dict:
         return {"error": str(ex)}
     if comment is None:
         return {"error": f"Epic '{epic_name}' not found."}
+    _notify_board_changed()
     return comment
 
 
@@ -228,6 +281,8 @@ def add_epic_comment(epic_name: str, text: str) -> dict:
 def delete_epic_comment(epic_name: str, comment_id: str) -> dict:
     """Delete a comment from an epic by its comment ID."""
     ok = _epics.delete_epic_comment(epic_name, comment_id)
+    if ok:
+        _notify_board_changed()
     return {"deleted": ok}
 
 
@@ -240,6 +295,7 @@ def add_card_comment(card_id: str, text: str) -> dict:
         return {"error": str(ex)}
     if card is None:
         return {"error": f"Card '{card_id}' not found."}
+    _notify_board_changed()
     return card.comments[-1]
 
 
@@ -247,6 +303,8 @@ def add_card_comment(card_id: str, text: str) -> dict:
 def delete_card_comment(card_id: str, comment_id: str) -> dict:
     """Delete a comment from a card by its comment ID."""
     card = operations.delete_comment(card_id, comment_id)
+    if card is not None:
+        _notify_board_changed()
     return {"deleted": card is not None}
 
 
@@ -254,6 +312,8 @@ def delete_card_comment(card_id: str, comment_id: str) -> dict:
 def link_cards(from_number: int, to_number: int, link_type: str) -> dict:
     """Create a typed link between two cards. link_type: blocks, blocked_by, parent_of, child_of, duplicate, relates_to."""
     err = operations.link_cards(from_number, to_number, link_type)
+    if err is None:
+        _notify_board_changed()
     return {"ok": err is None, "error": err}
 
 
@@ -261,6 +321,8 @@ def link_cards(from_number: int, to_number: int, link_type: str) -> dict:
 def unlink_cards(from_number: int, to_number: int, link_type: str) -> dict:
     """Remove a typed link between two cards (also removes the inverse link)."""
     err = operations.unlink_cards(from_number, to_number, link_type)
+    if err is None:
+        _notify_board_changed()
     return {"ok": err is None, "error": err}
 
 
