@@ -20,6 +20,9 @@ class ChatPanel:
         self._models: list[ModelDef] = load_models()
         self._model: ModelDef = self._models[0]
         self._busy = False   # guards against re-entrant / double sends
+        self._send_lock = threading.Lock()  # makes busy check+set atomic
+        self._last_sent: tuple[str, float] = ("", 0.0)  # (text, timestamp) for content dedup
+        self._DEDUP_WINDOW = 1.5  # seconds — drop identical text within this window
         self._config_ok = self._check_ai_config()
         self._build()
         def _warm():
@@ -117,9 +120,12 @@ class ChatPanel:
 
         # --- mode pills (ask / agent / plan / yolo) ---
         self._mode_pills: dict[str, ft.Container] = {}
+        self._mode_pill_texts: dict[str, ft.Text] = {}
         for key, label in [("ask", "Ask"), ("plan", "Plan"), ("agent", "Agent"), ("yolo", "🔥 Yolo")]:
+            _pill_text = ft.Text(label, size=11, weight=ft.FontWeight.W_500)
+            self._mode_pill_texts[key] = _pill_text
             self._mode_pills[key] = ft.Container(
-                content=ft.Text(label, size=11, weight=ft.FontWeight.W_500),
+                content=_pill_text,
                 height=42,
                 padding=ft.Padding(8, 0, 8, 0),
                 alignment=ft.Alignment.CENTER,
@@ -422,15 +428,27 @@ class ChatPanel:
             self._typing_stop.wait(0.35)
 
     def _on_send(self, e) -> None:
-        if self._busy:
-            return
-        text = (self._input.value or "").strip()
-        if not text:
-            return
-        self._busy = True
-        self._input.value = ""
-        self._input.disabled = True
-        self._send_btn.disabled = True
+        # Acquire the lock to make the busy-check and flag-set atomic.
+        # Without this, on_submit (Enter) and on_click (Send button) can both
+        # pass the `if self._busy` check before either sets it to True, causing
+        # two _do_send threads to launch and duplicate bubbles to appear.
+        with self._send_lock:
+            if self._busy:
+                return
+            text = (self._input.value or "").strip()
+            if not text:
+                return
+            # Content-based dedup: drop identical message submitted within the
+            # dedup window (covers Enter+click, double-click, accidental re-send).
+            now = time.time()
+            if text == self._last_sent[0] and (now - self._last_sent[1]) < self._DEDUP_WINDOW:
+                return
+            # Commit: from here exactly one thread will proceed.
+            self._busy = True
+            self._last_sent = (text, now)
+            self._input.value = ""
+            self._input.disabled = True
+            self._send_btn.disabled = True
         self._messages.append({"role": "user", "content": text})
         # Spawn immediately — don't block the Flet event loop.
         # All UI updates happen from the background thread via the send queue.
@@ -576,12 +594,13 @@ class ChatPanel:
     def _render_mode_pills(self) -> None:
         for key, pill in self._mode_pills.items():
             active = key == self._mode
+            txt = self._mode_pill_texts[key]
             if key == "yolo":
                 pill.bgcolor = "#4A1F1F" if active else None
-                pill.content.color = "#F07878" if active else "#8B949E"
+                txt.color = "#F07878" if active else "#8B949E"
             else:
                 pill.bgcolor = "#1C3A5C" if active else None
-                pill.content.color = "#58A6FF" if active else "#8B949E"
+                txt.color = "#58A6FF" if active else "#8B949E"
 
     def _toggle_yolo(self, e=None) -> None:
         self._mode = "yolo" if self._mode != "yolo" else "agent"
@@ -675,7 +694,7 @@ class ChatPanel:
 
         def _toggle(_e) -> None:
             detail_col.visible = not detail_col.visible
-            chevron.name = ft.Icons.EXPAND_LESS if detail_col.visible else ft.Icons.EXPAND_MORE
+            chevron.icon = ft.Icons.EXPAND_LESS if detail_col.visible else ft.Icons.EXPAND_MORE
             try:
                 self._panel_container.update()
             except Exception:
