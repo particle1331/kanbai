@@ -94,7 +94,7 @@ def start_watcher(board_dir: Path, on_change: Callable[[], None]) -> Observer:
             # Observer died (e.g. after a stop()) — clean up and recreate.
             del _watchers[key]
 
-        handler = _BoardChangeHandler(on_change, debounce_sec=1.0)
+        handler = _BoardChangeHandler(on_change, debounce_sec=0.3)
         observer = Observer()
         observer.schedule(handler, str(board_dir), recursive=True)
         observer.daemon = True

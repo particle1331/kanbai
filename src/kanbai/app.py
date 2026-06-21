@@ -374,6 +374,12 @@ def run_app(port: int = 8765) -> None:
                 _refresh_health_badge()
                 _refresh_git_status()
 
+            # Register the board-refresh hook so in-process MCP mutations
+            # (SSE transport) trigger an immediate UI refresh instead of
+            # waiting ~1 s for the file-watcher debounce.
+            from kanbai.mcp_server.server import register_board_refresh
+            register_board_refresh(on_board_change)
+
             from kanbai.ui.chat_panel import ChatPanel
             chat = ChatPanel(page, on_board_change=on_board_change)
 
