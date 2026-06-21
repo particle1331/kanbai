@@ -86,11 +86,22 @@ def create_card(
 
     lane must be one of: backlog, in_progress, review, done.
     due_date is an optional YYYY-MM-DD deadline.
+    epic is optional — if supplied it must already exist (call list_epics to see
+    available epics); an unknown or archived epic returns {"error": "..."}.
 
     Tags: always include one type tag — 'bugfix', 'feature', or 'enhancement' —
     plus 1-2 additional tags derived from the title, description, and epic.
     """
-    card = operations.create_card(title, lane, description, tags, priority, epic=epic, due_date=due_date)
+    from kanbai.board.operations import EpicNotFoundError, EpicArchivedError
+    try:
+        card = operations.create_card(title, lane, description, tags, priority, epic=epic, due_date=due_date)
+    except EpicNotFoundError as exc:
+        available = ", ".join(_epics.list_epics()) or "(none yet)"
+        return {"error": str(exc), "available_epics": available}
+    except EpicArchivedError as exc:
+        return {"error": str(exc)}
+    except ValueError as exc:
+        return {"error": str(exc)}
     _notify_board_changed()
     return {"id": card.id, "number": card.number, "title": card.title, "lane": card.lane, "epic": card.epic, "due_date": card.due_date}
 
