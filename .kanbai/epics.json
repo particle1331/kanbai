@@ -10,5 +10,11 @@
     "archived_card_ids": [],
     "description": "",
     "comments": []
+  },
+  "test": {
+    "archived": false,
+    "archived_card_ids": [],
+    "description": "THIS BOARD IS FOR TESTING KANBAI.",
+    "comments": []
   }
 }

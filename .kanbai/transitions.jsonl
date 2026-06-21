@@ -36,3 +36,17 @@
 {"card_id": "f2c91416-a6e9-4738-a112-0fd33a6cf884", "from": null, "to": "backlog", "at": "2026-06-21T14:29:52.519634+00:00"}
 {"card_id": "c44a0fd6-a503-496c-86c1-9499496ae96d", "from": "backlog", "to": "done", "at": "2026-06-21T14:42:21.272984+00:00"}
 {"card_id": "e0ef513f-6225-40f4-80a3-54366b4664ea", "from": "review", "to": "done", "at": "2026-06-21T15:11:27.723573+00:00"}
+{"card_id": "b8477d40-0989-45d6-bba7-21986afe9199", "from": "backlog", "to": "done", "at": "2026-06-21T15:20:03.444310+00:00"}
+{"card_id": "f2c91416-a6e9-4738-a112-0fd33a6cf884", "from": "review", "to": "done", "at": "2026-06-21T15:20:04.596336+00:00"}
+{"card_id": "d8e80140-896b-4edd-afa1-1c07faa59746", "from": null, "to": "backlog", "at": "2026-06-21T15:21:46.105272+00:00"}
+{"card_id": "1ca01880-246d-4ebb-b672-d23d321c69d0", "from": null, "to": "backlog", "at": "2026-06-21T15:21:48.711708+00:00"}
+{"card_id": "0455b09d-8b90-4940-8206-f24aae6aae5a", "from": null, "to": "backlog", "at": "2026-06-21T15:21:51.031339+00:00"}
+{"card_id": "0455b09d-8b90-4940-8206-f24aae6aae5a", "from": "backlog", "to": "in_progress", "at": "2026-06-21T15:21:52.329369+00:00"}
+{"card_id": "1ca01880-246d-4ebb-b672-d23d321c69d0", "from": "backlog", "to": "in_progress", "at": "2026-06-21T15:21:53.232324+00:00"}
+{"card_id": "d8e80140-896b-4edd-afa1-1c07faa59746", "from": "backlog", "to": "in_progress", "at": "2026-06-21T15:21:54.353280+00:00"}
+{"card_id": "1ca01880-246d-4ebb-b672-d23d321c69d0", "from": "in_progress", "to": "review", "at": "2026-06-21T15:21:55.623693+00:00"}
+{"card_id": "1ca01880-246d-4ebb-b672-d23d321c69d0", "from": "review", "to": "done", "at": "2026-06-21T15:22:11.054478+00:00"}
+{"card_id": "0455b09d-8b90-4940-8206-f24aae6aae5a", "from": "in_progress", "to": "done", "at": "2026-06-21T15:22:16.662673+00:00"}
+{"card_id": "d8e80140-896b-4edd-afa1-1c07faa59746", "from": "in_progress", "to": "done", "at": "2026-06-21T15:22:17.614971+00:00"}
+{"card_id": "0ba2b0ec-24c4-48a9-82b0-25e8c7b80428", "from": null, "to": "backlog", "at": "2026-06-21T15:24:44.138366+00:00"}
+{"card_id": "c6f31ae4-7a76-45e0-be1d-b83c32a63bdc", "from": null, "to": "backlog", "at": "2026-06-21T15:24:46.933695+00:00"}

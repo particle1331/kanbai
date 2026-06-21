@@ -14,8 +14,8 @@
       "completion_tokens": 204
     },
     "base": {
-      "prompt_tokens": 8237,
-      "completion_tokens": 1854
+      "prompt_tokens": 11803,
+      "completion_tokens": 1928
     }
   },
   "git_tracking": true
