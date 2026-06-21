@@ -29,3 +29,5 @@
 {"card_id": "d5e78efb-37d4-4117-9a88-fc5b56d2de22", "from": null, "to": "backlog", "at": "2026-06-20T17:42:39.587466+00:00"}
 {"card_id": "f404916d-3aa2-4760-a4d0-9db789f6308d", "from": "in_progress", "to": "done", "at": "2026-06-21T13:02:38.476376+00:00"}
 {"card_id": "7f1ab7d2-dacd-45d1-9abf-9248e83b7c46", "from": "backlog", "to": "done", "at": "2026-06-21T13:20:44.773251+00:00"}
+{"card_id": "c44a0fd6-a503-496c-86c1-9499496ae96d", "from": null, "to": "backlog", "at": "2026-06-21T14:20:07.559876+00:00"}
+{"card_id": "d5e78efb-37d4-4117-9a88-fc5b56d2de22", "from": "in_progress", "to": "done", "at": "2026-06-21T14:22:14.519473+00:00"}
