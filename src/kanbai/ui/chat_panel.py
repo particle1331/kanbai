@@ -121,7 +121,7 @@ class ChatPanel:
         # --- mode pills (ask / agent / plan / yolo) ---
         self._mode_pills: dict[str, ft.Container] = {}
         self._mode_pill_texts: dict[str, ft.Text] = {}
-        for key, label in [("ask", "Ask"), ("plan", "Plan"), ("agent", "Agent"), ("yolo", "🔥 Yolo")]:
+        for key, label in [("agent", "Agent"), ("ask", "Ask"), ("plan", "Plan"), ("yolo", "🔥 Yolo")]:
             _pill_text = ft.Text(label, size=11, weight=ft.FontWeight.W_500)
             self._mode_pill_texts[key] = _pill_text
             self._mode_pills[key] = ft.Container(
