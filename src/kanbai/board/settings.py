@@ -100,7 +100,9 @@ _DEFAULTS: dict = {
     "reasoning_effort": ReasoningEffort.NONE.value,  # ReasoningEffort enum value
     "max_completion_tokens": 2048,
     "stream_response": True,
-    # Default chat mode for the chat panel.
+    # Default chat mode for each new app session. The live mode is session-only
+    # and intentionally not persisted, so risky modes like YOLO never stick
+    # across restarts.
     "chat_mode": "agent",  # "ask" | "agent" | "plan" | "yolo"
     # Max model turns (each may issue tool calls) before control returns to the user.
     "max_agent_steps": 8,
@@ -194,18 +196,22 @@ def set_stream_response(value: bool) -> None:
 
 
 def chat_mode() -> str:
-    """Default chat mode: 'ask' | 'agent' | 'plan' | 'yolo'."""
-    mode = str(_load().get("chat_mode", "agent")).lower()
+    """Default chat mode for a fresh app session.
+
+    This intentionally ignores any persisted ``settings.json`` value so the chat
+    panel always resets to the safe default on restart.
+    """
+    mode = str(_DEFAULTS.get("chat_mode", "agent")).lower()
     return mode if mode in ("ask", "agent", "plan", "yolo") else "agent"
 
 
 def set_chat_mode(value: str) -> None:
-    """Persist the selected chat mode."""
-    mode = str(value).lower()
-    if mode not in ("ask", "agent", "plan", "yolo"):
-        mode = "agent"
-    _load()["chat_mode"] = mode
-    _save()
+    """Set the in-session chat mode.
+
+    Kept as a compatibility shim for callers that still invoke it, but it no
+    longer persists anything to disk. Chat mode is session-only.
+    """
+    return None
 
 
 # ── Token usage tracking ───────────────────────────────────────────────────────

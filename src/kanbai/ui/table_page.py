@@ -588,7 +588,10 @@ class TablePage:
                 def delete(e, cid=r["id"]):
                     def confirm(_):
                         dlg.open = False
-                        operations.delete_card(cid)
+                        ok = operations.delete_card(cid)
+                        if not ok:
+                            archived = operations.archive_card(cid)
+                            ok = bool(archived) and operations.delete_card(cid)
                         self.refresh()
                         self._page.update()
 

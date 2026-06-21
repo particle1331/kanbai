@@ -1183,38 +1183,61 @@ def open_edit_dialog(
         on_archived(card_id, original_lane)
 
     def _delete(e) -> None:
-        """Show inline delete confirmation by swapping the dialog actions."""
+        """Show a separate confirmation popup for permanent deletion."""
+        prev_kb = page.on_keyboard_event
+
+        def _finish_delete() -> bool:
+            ok = operations.delete_card(card_id)
+            if not ok:
+                # Some installs still enforce archive-first permanent deletion.
+                archived = operations.archive_card(card_id)
+                ok = bool(archived) and operations.delete_card(card_id)
+            return ok
+
+        def _cancel_dlg(_) -> None:
+            page.on_keyboard_event = prev_kb
+            page.pop_dialog()
 
         def _confirm_delete(_) -> None:
-            ok = operations.delete_card(card_id)
+            page.on_keyboard_event = prev_kb
+            page.pop_dialog()  # close confirm dialog
+            ok = _finish_delete()
             if ok:
                 _cleanup_picker()
                 _restore_kb()
-                page.pop_dialog()
+                page.pop_dialog()  # close card dialog
                 on_archived(card_id, original_lane)
+            else:
+                op_error.value = "Couldn't delete card."
+                page.update()
 
-        def _cancel_delete(_) -> None:
-            # Restore normal view actions without re-rendering the whole dialog.
-            _render("view")
+        def _on_delete_key(ev: ft.KeyboardEvent) -> None:
+            if ev.key == "Escape":
+                _cancel_dlg(None)
+                return
+            if ev.key == "Enter":
+                _confirm_delete(None)
+                return
+            if prev_kb:
+                prev_kb(ev)  # type: ignore[call-arg]
 
-        # Swap actions to inline confirm/cancel — no second dialog needed.
-        dlg.title = ft.Text("Delete this card permanently?")
-        dlg.actions = [
-            ft.IconButton(
-                ft.Icons.DELETE_FOREVER,
-                icon_color=ft.Colors.RED_600,
-                tooltip="Yes, delete permanently",
-                on_click=_confirm_delete,
-            ),
-            ft.IconButton(
-                ft.Icons.CANCEL,
-                icon_color="#ADBAC7",
-                tooltip="Cancel",
-                on_click=_cancel_delete,
-            ),
-        ]
-        dlg.actions_alignment = ft.MainAxisAlignment.END
-        page.update()
+        confirm_dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Delete this card permanently?"),
+            content=ft.Text("This cannot be undone."),
+            actions=[
+                ft.TextButton("Cancel", icon=ft.Icons.CANCEL, on_click=_cancel_dlg),
+                ft.TextButton(
+                    "Delete",
+                    icon=ft.Icons.DELETE_FOREVER,
+                    on_click=_confirm_delete,
+                    style=ft.ButtonStyle(color="#F07878"),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.on_keyboard_event = _on_delete_key
+        page.show_dialog(confirm_dlg)
 
     def _close(e) -> None:
         _cleanup_picker()
