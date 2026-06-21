@@ -100,6 +100,8 @@ _DEFAULTS: dict = {
     "reasoning_effort": ReasoningEffort.NONE.value,  # ReasoningEffort enum value
     "max_completion_tokens": 2048,
     "stream_response": True,
+    # Default chat mode for the chat panel.
+    "chat_mode": "agent",  # "ask" | "agent" | "plan" | "yolo"
     # Max model turns (each may issue tool calls) before control returns to the user.
     "max_agent_steps": 8,
     # Cumulative token usage per model handle.
@@ -188,6 +190,21 @@ def stream_response() -> bool:
 
 def set_stream_response(value: bool) -> None:
     _load()["stream_response"] = bool(value)
+    _save()
+
+
+def chat_mode() -> str:
+    """Default chat mode: 'ask' | 'agent' | 'plan' | 'yolo'."""
+    mode = str(_load().get("chat_mode", "agent")).lower()
+    return mode if mode in ("ask", "agent", "plan", "yolo") else "agent"
+
+
+def set_chat_mode(value: str) -> None:
+    """Persist the selected chat mode."""
+    mode = str(value).lower()
+    if mode not in ("ask", "agent", "plan", "yolo"):
+        mode = "agent"
+    _load()["chat_mode"] = mode
     _save()
 
 

@@ -16,7 +16,7 @@ class ChatPanel:
         self._messages: list[dict] = []
         self._visible = False
         self._on_board_change = on_board_change  # called after agent acts
-        self._mode = "ask"   # "ask" | "agent" | "plan" | "yolo"
+        self._mode = _settings.chat_mode()  # "ask" | "agent" | "plan" | "yolo"
         self._models: list[ModelDef] = load_models()
         self._model: ModelDef = self._models[0]
         self._busy = False   # guards against re-entrant / double sends
@@ -588,6 +588,7 @@ class ChatPanel:
 
     def _set_mode(self, mode: str) -> None:
         self._mode = mode
+        _settings.set_chat_mode(mode)
         self._render_mode_pills()
         self._panel_container.update()
 
@@ -604,6 +605,7 @@ class ChatPanel:
 
     def _toggle_yolo(self, e=None) -> None:
         self._mode = "yolo" if self._mode != "yolo" else "agent"
+        _settings.set_chat_mode(self._mode)
         self._render_mode_pills()
         self._panel_container.update()
 
@@ -901,8 +903,11 @@ class ChatPanel:
         if not self._messages:
             return
 
+        prev_kb_handler = self.page.on_keyboard_event
+
         def _cancel(ev):
             dlg.open = False
+            self.page.on_keyboard_event = prev_kb_handler
             self.page.update()
 
         def _confirm(ev):
@@ -911,7 +916,12 @@ class ChatPanel:
             self._msg_list.controls.clear()
             self._ctx_text.value = "ctx\n0%"
             self._ctx_text.color = ft.Colors.GREY_500
+            self.page.on_keyboard_event = prev_kb_handler
             self.page.update()
+
+        def _on_key(e: ft.KeyboardEvent) -> None:
+            if e.key == "Escape":
+                _cancel(None)
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -921,15 +931,22 @@ class ChatPanel:
                 "This can't be undone."
             ),
             actions=[
-                ft.TextButton("Cancel", on_click=_cancel),
-                ft.FilledButton(
-                    "Reset",
+                ft.IconButton(
+                    ft.Icons.CANCEL,
+                    icon_color="#ADBAC7",
+                    tooltip="Cancel",
+                    on_click=_cancel,
+                ),
+                ft.IconButton(
+                    ft.Icons.CHECK_CIRCLE,
+                    icon_color=ft.Colors.RED_600,
+                    tooltip="Reset",
                     on_click=_confirm,
-                    style=ft.ButtonStyle(bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE),
                 ),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
         self.page.overlay.append(dlg)
+        self.page.on_keyboard_event = _on_key
         dlg.open = True
         self.page.update()
