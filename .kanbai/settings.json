@@ -3,11 +3,12 @@
   "reasoning_effort": "none",
   "max_completion_tokens": 2048,
   "stream_response": true,
+  "chat_mode": "agent",
   "max_agent_steps": 8,
   "token_usage": {
     "nano": {
-      "prompt_tokens": 73103,
-      "completion_tokens": 1555
+      "prompt_tokens": 75744,
+      "completion_tokens": 1607
     },
     "mini": {
       "prompt_tokens": 8931,
