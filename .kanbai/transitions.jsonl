@@ -91,3 +91,7 @@
 {"card_id": "fe62b342-3404-4e7a-b1ac-e9b3efcc0d49", "from": "in_progress", "to": "done", "at": "2026-06-21T18:16:29.999349+00:00"}
 {"card_id": "4a7e9e84-b52f-4d8b-a73b-e13b45f836cd", "from": null, "to": "backlog", "at": "2026-06-21T18:16:44.716260+00:00"}
 {"card_id": "fe62b342-3404-4e7a-b1ac-e9b3efcc0d49", "from": "done", "to": "review", "at": "2026-06-21T18:17:36.298129+00:00"}
+{"card_id": "fe62b342-3404-4e7a-b1ac-e9b3efcc0d49", "from": "review", "to": "done", "at": "2026-06-21T18:31:45.539016+00:00"}
+{"card_id": "7b7f45ac-38f5-4554-9f97-6504363514e3", "from": null, "to": "backlog", "at": "2026-06-21T18:40:56.470737+00:00"}
+{"card_id": "7b7f45ac-38f5-4554-9f97-6504363514e3", "from": "backlog", "to": "in_progress", "at": "2026-06-21T18:45:33.671417+00:00"}
+{"card_id": "7b7f45ac-38f5-4554-9f97-6504363514e3", "from": "in_progress", "to": "review", "at": "2026-06-21T18:47:38.819752+00:00"}
