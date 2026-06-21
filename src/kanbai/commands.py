@@ -27,7 +27,7 @@ def add(
     title: str = typer.Argument(..., help="Card title."),
     priority: str = typer.Option("medium", "--priority", "-p", help="Priority: low, medium, high, critical."),
     tags: Optional[str] = typer.Option(None, "--tags", "-t", help="Comma-separated tags."),
-    epic: Optional[str] = typer.Option(None, "--epic", "-e", help="Epic name."),
+    epic: str = typer.Option(..., "--epic", "-e", help="Epic name (required)."),
     description: str = typer.Option("", "--desc", "-d", help="Card description."),
     due_date: Optional[str] = typer.Option(None, "--due", help="Due date (YYYY-MM-DD)."),
 ) -> None:
@@ -97,7 +97,7 @@ def ls(
     typer.echo("─" * 98)
     for c in displayed:
         num = f"#{c.get('number', '?')}"
-        lane_label = LANE_LABELS.get(c.get("lane", ""), c.get("lane", ""))[:12]
+        lane_label = (LANE_LABELS.get(c.get("lane", "")) or c.get("lane") or "")[:12]
         pri = (c.get("priority") or "medium")[:6]
         title_str = (c.get("title") or "")[:48]
         epic_str = (c.get("epic") or "—")[:18]

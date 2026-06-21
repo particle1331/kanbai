@@ -76,18 +76,18 @@ def tool(tier: str = "read"):
 def create_card(
     title: str,
     lane: str,
+    epic: str,
     description: str = "",
     tags: list[str] | None = None,
     priority: str = "medium",
-    epic: str | None = None,
     due_date: str | None = None,
 ) -> dict:
     """Create a new card on the Kanban board.
 
     lane must be one of: backlog, in_progress, review, done.
+    epic is required and must already exist — call list_epics to see available
+    epics. An unknown or archived epic returns {"error": "..."}.
     due_date is an optional YYYY-MM-DD deadline.
-    epic is optional — if supplied it must already exist (call list_epics to see
-    available epics); an unknown or archived epic returns {"error": "..."}.
 
     Tags: always include one type tag — 'bugfix', 'feature', or 'enhancement' —
     plus 1-2 additional tags derived from the title, description, and epic.
