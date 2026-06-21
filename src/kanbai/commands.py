@@ -25,7 +25,6 @@ def _ensure_project() -> None:
 @app.command()
 def add(
     title: str = typer.Argument(..., help="Card title."),
-    lane: str = typer.Option("backlog", "--lane", "-l", help="Lane: backlog, in_progress, review, done."),
     priority: str = typer.Option("medium", "--priority", "-p", help="Priority: low, medium, high, critical."),
     tags: Optional[str] = typer.Option(None, "--tags", "-t", help="Comma-separated tags."),
     epic: Optional[str] = typer.Option(None, "--epic", "-e", help="Epic name."),
@@ -41,7 +40,7 @@ def add(
     try:
         card = operations.create_card(
             title=title,
-            lane=lane,
+            lane="backlog",
             description=description,
             tags=tag_list,
             priority=priority,
