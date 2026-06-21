@@ -823,7 +823,7 @@ class HealthPage:
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
             height=140,
-            tooltip=_tip(f"In Progress: {in_progress}  │  Review: {review}\n⚠ Watch: >{settings.HEALTH_WIP_WATCH}  │  Bad: >{settings.HEALTH_WIP_BAD}"),
+            tooltip=_tip(f"In Progress: {in_progress}  │  Review: {review}\nWatch: >{settings.HEALTH_WIP_WATCH}  │  Bad: >{settings.HEALTH_WIP_BAD}"),
         )
         return card
 
@@ -877,7 +877,7 @@ class HealthPage:
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
             height=140,
-            tooltip=_tip(f"Blocked tasks: {blocked_tasks}\n⚠ Watch: ≥{settings.HEALTH_BLOCKER_WATCH}  │  Bad: ≥{settings.HEALTH_BLOCKER_BAD}"),
+            tooltip=_tip(f"Blocked tasks: {blocked_tasks}\nWatch: ≥{settings.HEALTH_BLOCKER_WATCH}  │  Bad: ≥{settings.HEALTH_BLOCKER_BAD}"),
         )
         return card
 
@@ -934,7 +934,7 @@ class HealthPage:
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
             height=140,
-            tooltip=_tip(f"Due ≤1d: {due_1d}  ·  Due 2–3d: {due_3d - due_1d}\n⚠ Watch: ≥{settings.HEALTH_DUE_WATCH} in 3d  │  Bad: ≥{settings.HEALTH_DUE_BAD} in 3d or any ≤1d"),
+            tooltip=_tip(f"Due ≤1d: {due_1d}  ·  Due 2–3d: {due_3d - due_1d}\nWatch: ≥{settings.HEALTH_DUE_WATCH} in 3d  │  Bad: ≥{settings.HEALTH_DUE_BAD} in 3d or any ≤1d"),
         )
         return card
 
@@ -974,7 +974,7 @@ class HealthPage:
         if mx is not None:
             tooltip_parts.append(f"Max: {mx:.1f}d")
         tooltip_msg = "  │  ".join(tooltip_parts) if tooltip_parts else "No WIP cards"
-        tooltip_msg += f"\n⚠ Watch: >{settings.HEALTH_WIP_AGE_WATCH_DAYS:.0f}d  │  Bad: >{settings.HEALTH_WIP_AGE_BAD_DAYS:.0f}d"
+        tooltip_msg += f"\nWatch: >{settings.HEALTH_WIP_AGE_WATCH_DAYS:.0f}d  │  Bad: >{settings.HEALTH_WIP_AGE_BAD_DAYS:.0f}d"
 
         card = ft.Container(
             content=ft.Column(
@@ -1081,7 +1081,7 @@ class HealthPage:
                 (f"P25: {p25:.1f}d  ·  P75: {p75:.1f}d"
                 if p25 is not None and p75 is not None
                 else "No completions in 7d")
-                + f"\n⚠ Watch: ≥{settings.HEALTH_CYCLE_TIME_WATCH_DAYS:.0f}d  │  Bad: ≥{settings.HEALTH_CYCLE_TIME_BAD_DAYS:.0f}d"
+                + f"\nWatch: ≥{settings.HEALTH_CYCLE_TIME_WATCH_DAYS:.0f}d  │  Bad: ≥{settings.HEALTH_CYCLE_TIME_BAD_DAYS:.0f}d"
             ),
         )
         return card
@@ -1148,7 +1148,7 @@ class HealthPage:
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
             height=140,
-            tooltip=_tip(f"Completed: {completed}  │  Started: {started}\n⚠ Watch: <{settings.HEALTH_THROUGHPUT_WATCH}  │  Bad: <{settings.HEALTH_THROUGHPUT_BAD}"),
+            tooltip=_tip(f"Completed: {completed}  │  Started: {started}\nWatch: <{settings.HEALTH_THROUGHPUT_WATCH}  │  Bad: <{settings.HEALTH_THROUGHPUT_BAD}"),
         )
         return card
 
@@ -1184,7 +1184,7 @@ class HealthPage:
             f"{outliers} card{'s' if outliers != 1 else ''} > {settings.AGED_BACKLOG_MULTIPLIER}× median"
             if median is not None else "No backlog cards"
         )
-        tooltip_msg += f"\n⚠ Watch: >{settings.HEALTH_BACKLOG_AGE_WATCH_DAYS:.0f}d  │  Bad: >{settings.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f}d"
+        tooltip_msg += f"\nWatch: >{settings.HEALTH_BACKLOG_AGE_WATCH_DAYS:.0f}d  │  Bad: >{settings.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f}d"
 
         card = ft.Container(
             content=ft.Column(
@@ -1285,7 +1285,7 @@ class HealthPage:
             padding=ft.Padding(20, 18, 24, 18),
             expand=True,
             height=140,
-            tooltip=_tip(f"Started: {started}  │  Created: {created}\n⚠ Watch: <{settings.HEALTH_PULL_RATE_WATCH}  │  Bad: <{settings.HEALTH_PULL_RATE_BAD}"),
+            tooltip=_tip(f"Started: {started}  │  Created: {created}\nWatch: <{settings.HEALTH_PULL_RATE_WATCH}  │  Bad: <{settings.HEALTH_PULL_RATE_BAD}"),
         )
         return card
 
