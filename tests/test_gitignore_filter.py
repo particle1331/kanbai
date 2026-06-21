@@ -119,6 +119,27 @@ class TestGitignoreFilter:
         f.reload()
         assert f.is_ignored(tmp_path / "secret.key")
 
+    def test_venv_gitignore_wildstar_does_not_poison_filter(self, tmp_path: Path) -> None:
+        """A .venv/.gitignore containing bare '*' must NOT cause real project
+        files to be reported as ignored."""
+        (tmp_path / ".gitignore").write_text(".env\n")
+        venv = tmp_path / ".venv"
+        venv.mkdir()
+        (venv / ".gitignore").write_text("*\n")  # typical virtualenv gitignore
+        f = GitignoreFilter(tmp_path)
+        assert not f.is_ignored(tmp_path / "README.md")
+        assert not f.is_ignored(tmp_path / "src")
+        assert f.is_ignored(tmp_path / ".env")   # root gitignore still works
+
+    def test_hidden_parent_gitignore_is_skipped(self, tmp_path: Path) -> None:
+        """gitignore files inside hidden directories are not loaded."""
+        (tmp_path / ".gitignore").write_text("")
+        hidden = tmp_path / ".pi" / "npm"
+        hidden.mkdir(parents=True)
+        (hidden / ".gitignore").write_text("*\n!.gitignore\n")
+        f = GitignoreFilter(tmp_path)
+        assert not f.is_ignored(tmp_path / "main.py")
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # Integration tests for list_files / read_file tool handlers

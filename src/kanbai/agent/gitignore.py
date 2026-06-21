@@ -16,6 +16,7 @@ Design decisions
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pathspec
@@ -40,15 +41,46 @@ class GitignoreFilter:
     # Internal helpers                                                     #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _load(root: Path) -> pathspec.PathSpec:
-        """Walk the tree and collect every ``.gitignore`` pattern."""
+    # Directories we never descend into when collecting .gitignore files.
+    # These often contain their own .gitignore files with very broad patterns
+    # (e.g. `.venv/.gitignore` contains bare `*`) that would incorrectly
+    # shadow the entire project.
+    _SKIP_DIRS: frozenset[str] = frozenset({
+        ".venv", "venv", ".env", "env",
+        "node_modules", "__pycache__",
+        ".git", ".hg", ".svn",
+        ".tox", ".nox",
+        "build", "dist", ".eggs",
+    })
+
+    @classmethod
+    def _load(cls, root: Path) -> pathspec.PathSpec:
+        """Walk the tree and collect ``.gitignore`` patterns.
+
+        Hidden directories (name starts with ``'.'``) and well-known noisy
+        directories (e.g. ``.venv``, ``node_modules``) are skipped so that
+        package-internal ``.gitignore`` files with broad patterns like ``*``
+        cannot accidentally match real project files.
+        """
         lines: list[str] = []
-        for gi in sorted(root.rglob(".gitignore")):
-            try:
-                lines.extend(gi.read_text(encoding="utf-8", errors="replace").splitlines())
-            except OSError:
-                pass
+        for dirpath, dirnames, filenames in os.walk(root):
+            cur = Path(dirpath)
+            # Prune hidden dirs and known noisy dirs in-place so os.walk
+            # never descends into them.
+            dirnames[:] = [
+                d for d in dirnames
+                if not d.startswith(".")
+                and d not in cls._SKIP_DIRS
+            ]
+            if ".gitignore" in filenames:
+                try:
+                    lines.extend(
+                        (cur / ".gitignore")
+                        .read_text(encoding="utf-8", errors="replace")
+                        .splitlines()
+                    )
+                except OSError:
+                    pass
         return pathspec.PathSpec.from_lines("gitignore", lines)
 
     # ------------------------------------------------------------------ #
