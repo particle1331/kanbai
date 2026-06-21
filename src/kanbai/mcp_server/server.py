@@ -9,6 +9,7 @@ from fastmcp import FastMCP
 
 from kanbai.board import epics as _epics
 from kanbai.board import operations
+from kanbai.board.agent_rules import SHARED_RULES
 
 # ── Direct board-refresh hook ────────────────────────────────────────────────
 # When the MCP server runs in the same process as the Flet UI (kanbai serve),
@@ -44,17 +45,7 @@ mcp = FastMCP(
         "Call list_docs to discover available documentation (kanban principles, flow metrics, etc.) "
         "and get_doc to read the full content of any doc. "
         "Always consult the kanban principles before making board decisions.\n\n"
-        "WORKFLOW DISCIPLINE (mandatory):\n"
-        "1. PICK UP — when you start work on a card, immediately move it to in_progress "
-        "using move_card before doing any other work on it.\n"
-        "2. HAND OFF — when you finish the work, move the card to review so the user "
-        "can evaluate the result before it is closed.\n"
-        "3. UPDATE DESCRIPTION — before moving to review, update the card description "
-        "to include a brief summary of what you found (root cause / analysis) and what "
-        "you did (the fix / change), so the reviewer has full context without needing "
-        "to read the diff or conversation history.\n"
-        "Never skip these transitions. backlog → in_progress → review is the expected "
-        "path for every piece of agent-driven work."
+        + SHARED_RULES
     ),
 )
 
@@ -91,7 +82,14 @@ def create_card(
     epic: str | None = None,
     due_date: str | None = None,
 ) -> dict:
-    """Create a new card on the Kanban board. lane must be one of: backlog, in_progress, review, done. due_date is an optional YYYY-MM-DD deadline."""
+    """Create a new card on the Kanban board.
+
+    lane must be one of: backlog, in_progress, review, done.
+    due_date is an optional YYYY-MM-DD deadline.
+
+    Tags: always include one type tag — 'bugfix', 'feature', or 'enhancement' —
+    plus 1-2 additional tags derived from the title, description, and epic.
+    """
     card = operations.create_card(title, lane, description, tags, priority, epic=epic, due_date=due_date)
     _notify_board_changed()
     return {"id": card.id, "number": card.number, "title": card.title, "lane": card.lane, "epic": card.epic, "due_date": card.due_date}

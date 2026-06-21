@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 from openai import AzureOpenAI
 
 from kanbai.board import epics as _epics
 from kanbai.board import operations
+from kanbai.board.agent_rules import SHARED_RULES
 from kanbai.board.models import _UNSET
 from kanbai.board.settings import ModelDef, ReasoningEffort
 
@@ -373,72 +375,103 @@ _TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": (
+                "Return the file tree of the project repository. "
+                "Use this to understand the codebase structure before creating or "
+                "updating cards — it helps derive accurate tags, epics, and descriptions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path to list (default: repo root).",
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Max directory depth to recurse (default: 3).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": (
+                "Read the contents of a file in the project repository. "
+                "Use this to understand code context when creating cards about "
+                "bugs, features, or improvements in specific files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Repo-relative path to the file to read.",
+                    },
+                    "max_lines": {
+                        "type": "integer",
+                        "description": "Maximum number of lines to return (default: 200).",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
 ]
 
 def _build_base_prompt() -> str:
-    """Build the base system prompt using live settings values so health thresholds
-    and Kanban principles always reflect the current configuration."""
+    """Build the base system prompt. Uses live settings so health thresholds
+    always reflect the current configuration."""
     from kanbai.board import settings as _s
     return (
         "You are Kanbot, an AI assistant embedded in a personal Kanban board. "
-        "Lanes available: backlog, in_progress, review, done. "
-        "When the user refers to a card by task number (e.g. #26 or 'card 26'), "
-        "always use get_card_by_number to resolve it before taking action. "
+        "Your primary role is board guardianship: keep the board healthy, cards accurate, "
+        "and surface important board state to the user proactively. "
+        "You also have full read access to the project codebase via list_files and read_file "
+        "\u2014 use this to write better card descriptions, derive accurate tags, and understand "
+        "the context of bugs or features before creating or updating cards.\n"
+        "Lanes: backlog, in_progress, review, done. "
+        "When the user refers to a card by number (e.g. #26), always call "
+        "get_card_by_number to resolve it before acting. "
         "Mode capabilities: ASK=read-only; AGENT=read+write (no deletion); "
-        "PLAN=read-only+planning; YOLO=read+write+permanent deletion. "
-        "Only Yolo mode can permanently delete cards.\n\n"
-        "KANBAN PRINCIPLES (mandatory — adhere to these at all times):\n"
-        f"P1 — FIXED TASK SIZE. Every card must be completable within 1–{_s.HEALTH_CYCLE_TIME_BAD_DAYS:.0f} days "
-        "(target ~3 days). Do not use story points or effort estimates — every card is one unit. "
-        "If a task is too large, decompose it before starting.\n"
-        "P2 — DECOMPOSE COMPLEX WORK. Break large tasks into smaller cards and use "
-        "'parent_of'/'child_of' links for hierarchy and 'blocks'/'blocked_by' to express "
-        "sequencing. Dependencies must be explicit.\n"
-        f"P3 — NO BACKLOG ROT. Once a card enters the backlog it should be completed or removed "
-        f"within {_s.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f} days. Prune stale items regularly.\n"
-        "P4 — STABLE REQUIREMENTS. If a card's requirements change drastically after entering "
-        "the board, archive it and create a fresh card. Minor edits are fine.\n"
-        "P5 — SPILLOVER IS NORMAL. The 7-day measurement window is fixed. Cards started before "
-        "the window that complete within it count toward throughput — this is expected.\n\n"
-        "HEALTH MODEL — call get_health_model for the full reference (all sections: "
-        "A-series signals A1–A8, chart thresholds B, pie chart flags C, operational parameters E, "
-        "flow event definitions, and design principles). "
-        "Key signals to know by default:\n"
-        f"A1 Throughput 7d (completed÷started): bad < {_s.HEALTH_THROUGHPUT_BAD}. "
-        "If bad, stop creating new cards and unblock what's in flight.\n"
-        f"A2 WIP Count (in_progress + review): bad > {_s.HEALTH_WIP_BAD}.\n"
-        f"A5 Pull Rate 7d (started÷created): bad < {_s.HEALTH_PULL_RATE_BAD}.\n"
-        "For exact watch/bad thresholds on all 8 signals and all other sections, call get_health_model.\n\n"
-        "BEFORE CREATING CARDS: always call get_board_summary first. "
-        "If throughput (A1) is bad or WIP count (A2) is bad, prefer unblocking over adding new work.\n"
-        "CARD CREATION DEFAULTS: when the user does not explicitly supply a field, infer it "
-        "from context rather than leaving it blank or using a generic fallback:\n"
-        "  • priority — infer from urgency cues in the title/message (high if blocking/urgent, "
-        "low if minor/polish, medium otherwise).\n"
-        "  • epic — call list_epics and pick the most contextually appropriate one; "
-        "only use Unassigned if no epic fits at all.\n"
-        "  • tags — derive 1–3 short tags from the title and epic.\n"
-        "  • description — write a concise task summary (1–3 sentences) describing what needs to be done, sized for 1–6 days of work.\n"
-        "The user can override any field explicitly; these rules apply only when a field is omitted.\n\n"
-        "GITOPS RULE \u2014 commit when moving a card to review:\n"
-        "Whenever you move a card to review AND source files or config were changed as part "
-        "of the work, you MUST call commit_resolution as the final step. "
-        "Always pass the 'paths' list with every file you modified or created — "
-        ".kanbai/ is included automatically so do not list it. "
-        "Use a conventional-commit subject line (feat/fix/refactor/chore/docs). "
-        "Skip the commit only for pure board housekeeping (reprioritising, renaming, "
-        "adding a comment) where no file outside .kanbai/ changed.\n\n"
+        "PLAN=read-only+planning; YOLO=read+write+permanent deletion.\n\n"
+        "BOARD GUARDIAN BEHAVIOUR:\n"
+        "- After answering any user question, check if the board state warrants a "
+        "proactive note (e.g. high WIP, stale backlog, bad throughput). "
+        "If so, mention it briefly without being intrusive.\n"
+        "- Before creating any card, call get_board_summary. "
+        "If A1 throughput or A2 WIP is bad, recommend unblocking over adding new work.\n"
+        "- Use list_files / read_file when creating cards about code issues to write "
+        "precise descriptions and tags grounded in the actual codebase.\n\n"
+        "KANBAN PRINCIPLES (mandatory):\n"
+        f"P1 \u2014 Fixed task size: 1\u2013{_s.HEALTH_CYCLE_TIME_BAD_DAYS:.0f} days per card (target ~3). No story points.\n"
+        "P2 \u2014 Decompose complex work into child cards; use 'blocks'/'blocked_by' for sequencing.\n"
+        f"P3 \u2014 No backlog rot: complete or prune within {_s.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f} days.\n"
+        "P4 \u2014 Stable requirements: archive and recreate if scope changes drastically.\n"
+        "P5 \u2014 Spillover is normal: cards started before the 7-day window count toward throughput.\n"
+        "Health model: call get_health_model for all A/B/C/E signals and thresholds.\n"
+        f"Key defaults \u2014 A1 Throughput bad < {_s.HEALTH_THROUGHPUT_BAD}; "
+        f"A2 WIP bad > {_s.HEALTH_WIP_BAD}; "
+        f"A5 Pull Rate bad < {_s.HEALTH_PULL_RATE_BAD}.\n\n"
+        + SHARED_RULES
+        + "\nGITOPS RULE \u2014 commit when moving a card to review:\n"
+        "Whenever you move a card to review AND source files changed, call commit_resolution. "
+        "Pass the 'paths' list of every file you modified (.kanbai/ is added automatically). "
+        "Use a conventional-commit subject (feat/fix/refactor/chore/docs). "
+        "Skip only for pure board housekeeping with no file changes outside .kanbai/.\n\n"
         "TIMEZONE RULES:\n"
-        "1. All card timestamps (created_at, updated_at) are stored in UTC ISO-8601.\n"
-        "2. Never treat the raw UTC date portion of a timestamp as the user's local date.\n"
-        "3. When the user asks about dates ('today', 'this week', 'yesterday', etc.), "
-        "call convert_timestamps_to_local with the relevant timestamps before comparing. "
-        "Use the returned local_date values to determine which cards match.\n"
-        "4. Always use convert_timestamps_to_local for date-relative queries — do not "
-        "attempt manual UTC offset arithmetic."
+        "1. All card timestamps are stored in UTC ISO-8601.\n"
+        "2. For any date-relative query ('today', 'this week', etc.), call "
+        "convert_timestamps_to_local first \u2014 never do manual UTC offset arithmetic."
     )
-
-
 _BASE_PROMPT = _build_base_prompt()
 
 
@@ -487,7 +520,7 @@ action, then briefly confirm what you changed. Be concise and action-oriented.""
 _PROMPTS = {"ask": _ASK_PROMPT, "agent": _AGENT_PROMPT, "plan": _PLAN_PROMPT, "yolo": _YOLO_PROMPT}
 
 # Tools that only read state — available in every mode.
-_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_epics", "get_epic", "convert_timestamps_to_local", "get_board_summary", "get_health_model"}
+_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_epics", "get_epic", "convert_timestamps_to_local", "get_board_summary", "get_health_model", "list_files", "read_file"}
 
 _WRITE_TOOL_NAMES = {
     "create_card", "update_card", "move_card", "archive_card",
@@ -682,6 +715,46 @@ def _dispatch_tool(name: str, args: dict) -> str:
             "completion_heatmap_this_year": _sc.done_cards_heatmap(_dt.date.today().year, epic=epic),
             "_metric_definitions": _sc.METRIC_DEFINITIONS,
         })
+
+    if name == "list_files":
+        from kanbai.paths import PROJECT_ROOT
+        import os
+        root = PROJECT_ROOT
+        rel = args.get("path", "")
+        if rel:
+            root = (PROJECT_ROOT / rel).resolve()
+        max_depth = int(args.get("depth", 3))
+        lines: list[str] = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            # skip hidden dirs and common noise
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".venv", "venv"))
+            depth = len(Path(dirpath).relative_to(root).parts)
+            if depth >= max_depth:
+                dirnames.clear()
+            indent = "  " * depth
+            lines.append(f"{indent}{Path(dirpath).name}/")
+            for fname in sorted(filenames):
+                if not fname.startswith("."):
+                    lines.append(f"{indent}  {fname}")
+        return json.dumps({"tree": "\n".join(lines)})
+
+    if name == "read_file":
+        from kanbai.paths import PROJECT_ROOT
+        path = PROJECT_ROOT / args["path"]
+        if not path.exists():
+            return json.dumps({"error": "file_not_found", "path": args["path"]})
+        max_lines = int(args.get("max_lines", 200))
+        try:
+            content_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            truncated = len(content_lines) > max_lines
+            return json.dumps({
+                "path": args["path"],
+                "lines": content_lines[:max_lines],
+                "truncated": truncated,
+                "total_lines": len(content_lines),
+            })
+        except Exception as exc:
+            return json.dumps({"error": str(exc), "path": args["path"]})
 
     return json.dumps({"error": "unknown_tool", "name": name})
 
