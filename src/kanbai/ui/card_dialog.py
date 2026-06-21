@@ -1183,47 +1183,38 @@ def open_edit_dialog(
         on_archived(card_id, original_lane)
 
     def _delete(e) -> None:
-        prev_kb = page.on_keyboard_event
+        """Show inline delete confirmation by swapping the dialog actions."""
 
-        def _cancel_dlg(_) -> None:
-            page.on_keyboard_event = prev_kb
-            page.pop_dialog()
-
-        def confirm(_) -> None:
-            page.on_keyboard_event = prev_kb
-            page.pop_dialog()  # close confirm dialog
+        def _confirm_delete(_) -> None:
             ok = operations.delete_card(card_id)
             if ok:
                 _cleanup_picker()
                 _restore_kb()
-                page.pop_dialog()  # close card dialog
+                page.pop_dialog()
                 on_archived(card_id, original_lane)
 
-        def _on_delete_key(ev: ft.KeyboardEvent) -> None:
-            if ev.key == "Escape":
-                _cancel_dlg(None)
+        def _cancel_delete(_) -> None:
+            # Restore normal view actions without re-rendering the whole dialog.
+            _render("view")
 
-        confirm_dlg = ft.AlertDialog(
-            title=ft.Text("Delete Card"),
-            content=ft.Text("Permanently delete this card? This cannot be undone."),
-            actions=[
-                ft.IconButton(
-                    ft.Icons.CANCEL,
-                    icon_color="#ADBAC7",
-                    tooltip="Cancel",
-                    on_click=_cancel_dlg,
-                ),
-                ft.IconButton(
-                    ft.Icons.DELETE_FOREVER,
-                    icon_color=ft.Colors.RED_600,
-                    tooltip="Delete permanently",
-                    on_click=confirm,
-                ),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-        page.show_dialog(confirm_dlg)
-        page.on_keyboard_event = _on_delete_key
+        # Swap actions to inline confirm/cancel — no second dialog needed.
+        dlg.title = ft.Text("Delete this card permanently?")
+        dlg.actions = [
+            ft.IconButton(
+                ft.Icons.DELETE_FOREVER,
+                icon_color=ft.Colors.RED_600,
+                tooltip="Yes, delete permanently",
+                on_click=_confirm_delete,
+            ),
+            ft.IconButton(
+                ft.Icons.CANCEL,
+                icon_color="#ADBAC7",
+                tooltip="Cancel",
+                on_click=_cancel_delete,
+            ),
+        ]
+        dlg.actions_alignment = ft.MainAxisAlignment.END
+        page.update()
 
     def _close(e) -> None:
         _cleanup_picker()
