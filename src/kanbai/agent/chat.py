@@ -309,10 +309,10 @@ _TOOLS = [
         "function": {
             "name": "commit_resolution",
             "description": (
-                "Stage ALL modified files in the repository and create a git commit "
-                "that records the resolution of a card. "
-                "MUST be called after moving a card to done whenever source files, "
-                "config, or board data were changed as part of the work. "
+                "Stage specific files and create a git commit recording the resolution "
+                "of a card. .kanbai/ is always staged automatically. "
+                "MUST be called after moving a card to done whenever source files or "
+                "config were changed as part of the work. "
                 "Do NOT call this for pure board-housekeeping moves (e.g. reprioritising "
                 "or renaming a card with no code changes)."
             ),
@@ -328,7 +328,20 @@ _TOOLS = [
                         "description": (
                             "Conventional-commit subject line, e.g. "
                             "'feat: agent infers card defaults from context'. "
-                            "A '\u2014 Resolves #N: <title>' trailer is appended automatically."
+                            "A 'Resolves #N \u2014 <title>' trailer is appended automatically."
+                        ),
+                    },
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Repo-relative paths of every file you modified or created "
+                            "as part of this card's work, e.g. "
+                            "['src/kanbai/agent/chat.py', 'src/kanbai/board/storage/git_ops.py']. "
+                            ".kanbai/ is always included automatically — do NOT list it here. "
+                            "If omitted, ALL uncommitted changes in the repo are staged, "
+                            "so always provide this list when other unrelated changes may "
+                            "be present in the working tree."
                         ),
                     },
                 },
@@ -409,8 +422,10 @@ def _build_base_prompt() -> str:
         "'Done when <observable outcome>.' sized for 1–6 days of work.\n"
         "The user can override any field explicitly; these rules apply only when a field is omitted.\n\n"
         "GITOPS RULE \u2014 commit when you close a card:\n"
-        "Whenever you move a card to done AND source files, config, or board data were "
-        "changed as part of the work, you MUST call commit_resolution as the final step. "
+        "Whenever you move a card to done AND source files or config were changed as part "
+        "of the work, you MUST call commit_resolution as the final step. "
+        "Always pass the 'paths' list with every file you modified or created — "
+        ".kanbai/ is included automatically so do not list it. "
         "Use a conventional-commit subject line (feat/fix/refactor/chore/docs). "
         "Skip the commit only for pure board housekeeping (reprioritising, renaming, "
         "adding a comment) where no file outside .kanbai/ changed.\n\n"
@@ -640,6 +655,7 @@ def _dispatch_tool(name: str, args: dict) -> str:
             card_number=args["card_number"],
             card_title=card_title,
             message=args["message"],
+            paths=args.get("paths"),
         )
         return json.dumps({"ok": ok, "info": info})
 

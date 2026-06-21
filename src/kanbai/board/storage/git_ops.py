@@ -55,11 +55,22 @@ def is_dirty() -> bool:
     return bool(r.stdout.strip())
 
 
-def commit_resolution(card_number: int, card_title: str, message: str) -> tuple[bool, str]:
-    """Stage all repo changes and commit them as the resolution of a card.
+def commit_resolution(
+    card_number: int,
+    card_title: str,
+    message: str,
+    paths: list[str] | None = None,
+) -> tuple[bool, str]:
+    """Stage specific files and commit them as the resolution of a card.
 
-    The commit subject is ``message`` (supplied by the agent).  A
-    ``Resolves #<card_number>`` trailer is appended automatically.
+    ``paths`` lists the files/directories changed as part of the work
+    (relative to the repo root or absolute).  The board directory
+    (``.kanbai/``) is always staged automatically so the caller does not
+    need to include it.
+
+    If ``paths`` is empty or None every change in the repo is staged
+    (``git add -A``) — use this only when the working tree is known clean
+    apart from the card's changes.
 
     Returns ``(success, info)`` where ``info`` is either the short commit SHA
     or a human-readable error string.
@@ -67,7 +78,12 @@ def commit_resolution(card_number: int, card_title: str, message: str) -> tuple[
     if not is_git_repo():
         return False, "Not a git repository"
 
-    add = _run("add", "-A")
+    if paths:
+        # Stage the explicit file list plus the board directory.
+        targets = [_board_rel()] + list(paths)
+        add = _run("add", "--", *targets)
+    else:
+        add = _run("add", "-A")
     if add.returncode != 0:
         return False, add.stderr.strip() or "git add failed"
 
