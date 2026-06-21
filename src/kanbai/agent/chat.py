@@ -307,6 +307,38 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "commit_resolution",
+            "description": (
+                "Stage ALL modified files in the repository and create a git commit "
+                "that records the resolution of a card. "
+                "MUST be called after moving a card to done whenever source files, "
+                "config, or board data were changed as part of the work. "
+                "Do NOT call this for pure board-housekeeping moves (e.g. reprioritising "
+                "or renaming a card with no code changes)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "card_number": {
+                        "type": "integer",
+                        "description": "The task number of the card being resolved (e.g. 10 for #10).",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": (
+                            "Conventional-commit subject line, e.g. "
+                            "'feat: agent infers card defaults from context'. "
+                            "A '\u2014 Resolves #N: <title>' trailer is appended automatically."
+                        ),
+                    },
+                },
+                "required": ["card_number", "message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_board_summary",
             "description": (
                 "Return aggregated analytics data for the board: card counts by lane and priority, "
@@ -376,6 +408,12 @@ def _build_base_prompt() -> str:
         "  • description — write a concise definition-of-done sentence: "
         "'Done when <observable outcome>.' sized for 1–6 days of work.\n"
         "The user can override any field explicitly; these rules apply only when a field is omitted.\n\n"
+        "GITOPS RULE \u2014 commit when you close a card:\n"
+        "Whenever you move a card to done AND source files, config, or board data were "
+        "changed as part of the work, you MUST call commit_resolution as the final step. "
+        "Use a conventional-commit subject line (feat/fix/refactor/chore/docs). "
+        "Skip the commit only for pure board housekeeping (reprioritising, renaming, "
+        "adding a comment) where no file outside .kanbai/ changed.\n\n"
         "TIMEZONE RULES:\n"
         "1. All card timestamps (created_at, updated_at) are stored in UTC ISO-8601.\n"
         "2. Never treat the raw UTC date portion of a timestamp as the user's local date.\n"
@@ -441,6 +479,7 @@ _WRITE_TOOL_NAMES = {
     "create_card", "update_card", "move_card", "archive_card",
     "unarchive_card", "set_card_epic",
     "create_epic", "archive_epic", "unarchive_epic", "link_cards", "unlink_cards",
+    "commit_resolution",
 }
 
 _YOLO_TOOL_NAMES = {"delete_card"}
@@ -592,6 +631,17 @@ def _dispatch_tool(name: str, args: dict) -> str:
             except ValueError as exc:
                 results.append({"utc": ts_str, "error": str(exc)})
         return json.dumps(results)
+
+    if name == "commit_resolution":
+        from kanbai.board.storage import git_ops, sqlite_cache as _sc
+        row = _sc.get_card_by_number(args["card_number"])
+        card_title = row["title"] if row else f"card #{args['card_number']}"
+        ok, info = git_ops.commit_resolution(
+            card_number=args["card_number"],
+            card_title=card_title,
+            message=args["message"],
+        )
+        return json.dumps({"ok": ok, "info": info})
 
     if name == "get_health_model":
         from kanbai.board.health_doc import health_model_doc

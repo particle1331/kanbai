@@ -55,6 +55,42 @@ def is_dirty() -> bool:
     return bool(r.stdout.strip())
 
 
+def commit_resolution(card_number: int, card_title: str, message: str) -> tuple[bool, str]:
+    """Stage all repo changes and commit them as the resolution of a card.
+
+    The commit subject is ``message`` (supplied by the agent).  A
+    ``Resolves #<card_number>`` trailer is appended automatically.
+
+    Returns ``(success, info)`` where ``info`` is either the short commit SHA
+    or a human-readable error string.
+    """
+    if not is_git_repo():
+        return False, "Not a git repository"
+
+    add = _run("add", "-A")
+    if add.returncode != 0:
+        return False, add.stderr.strip() or "git add failed"
+
+    body = f"{message}\n\nResolves #{card_number} — {card_title}"
+    commit = _run("commit", "-m", body)
+    if commit.returncode != 0:
+        stderr = commit.stderr.strip()
+        stdout = commit.stdout.strip()
+        if "nothing to commit" in stdout or "nothing to commit" in stderr:
+            return True, "nothing-to-commit"
+        return False, stderr or "git commit failed"
+
+    # Extract short SHA from output like "[main abc1234] ..."
+    sha = ""
+    for line in commit.stdout.splitlines():
+        if line.startswith("["):
+            parts = line.split()
+            if len(parts) >= 2:
+                sha = parts[1].rstrip("]")
+            break
+    return True, sha or "committed"
+
+
 def sync_push() -> tuple[bool, str]:
     """Stage board_data changes, commit, and push.
 
