@@ -202,7 +202,7 @@ def unarchive_card(card_id: str) -> dict | None:
 
 @tool("yolo")
 def delete_card(card_id: str) -> dict:
-    """Permanently delete a card. The card MUST be archived first. Irreversible."""
+    """Permanently delete a card. Irreversible (git history is the fallback)."""
     ok = operations.delete_card(card_id)
     if ok:
         _notify_board_changed()

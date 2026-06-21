@@ -1192,11 +1192,6 @@ def open_edit_dialog(
         def confirm(_) -> None:
             page.on_keyboard_event = prev_kb
             page.pop_dialog()  # close confirm dialog
-            # delete_card requires the card to be archived first.
-            # If the card is still active, archive it atomically here so
-            # the delete button works regardless of the card's current state.
-            if not card.archived:
-                operations.archive_card(card_id)
             ok = operations.delete_card(card_id)
             if ok:
                 _cleanup_picker()

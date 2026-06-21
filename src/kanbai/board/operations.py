@@ -322,11 +322,9 @@ def unarchive_epic_op(epic_name: str) -> int:
 
 
 def delete_card(card_id: str) -> bool:
-    """Permanently delete a card. Must be archived first. Returns False if not found or not archived."""
+    """Permanently delete a card. Returns False if not found."""
     card = markdown_store.read_card(card_id)
     if not card:
-        return False
-    if not card.archived:
         return False
     # Remove inverse links from all linked cards
     for lk in card.links:
