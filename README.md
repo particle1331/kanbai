@@ -1,6 +1,6 @@
 # Kanbai 看板
 
-> AI-powered Kanban board — per-repo CLI sidecar for humans and agents.
+> AI-powered Kanban board: per-repo CLI sidecar for humans and agents.
 
 Kanbai lives **inside** your project as a `.kanbai/` directory. It provides:
 
@@ -8,17 +8,6 @@ Kanbai lives **inside** your project as a `.kanbai/` directory. It provides:
 - **An MCP server** for AI agents to manage cards, report progress, and read health signals
 - **A CLI** for quick terminal actions and scripting
 
-```
-┌─────────────────────────────────────────┐
-│  Human (orchestrator)                   │
-│  └── kanbai serve → UI + MCP (SSE)     │
-├─────────────────────────────────────────┤
-│  AI Agents (workers)                    │
-│  └── kanbai serve --mcp → stdio MCP    │
-├─────────────────────────────────────────┤
-│  .kanbai/  ← shared board state in repo │
-└─────────────────────────────────────────┘
-```
 
 ---
 
