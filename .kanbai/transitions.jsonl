@@ -20,3 +20,12 @@
 {"card_id": "e0ef513f-6225-40f4-80a3-54366b4664ea", "from": null, "to": "backlog", "at": "2026-06-20T17:29:37.353709+00:00"}
 {"card_id": "e0383ede-73c7-44c0-bbd6-9ffb58e4b32a", "from": null, "to": "backlog", "at": "2026-06-20T17:31:24.862465+00:00"}
 {"card_id": "7f1ab7d2-dacd-45d1-9abf-9248e83b7c46", "from": null, "to": "backlog", "at": "2026-06-20T17:32:47.525541+00:00"}
+{"card_id": "701e3efb-b848-4b00-8472-1dcb73ed53dc", "from": null, "to": "backlog", "at": "2026-06-20T17:38:51.648413+00:00"}
+{"card_id": "701e3efb-b848-4b00-8472-1dcb73ed53dc", "from": "backlog", "to": "in_progress", "at": "2026-06-20T17:39:21.128447+00:00"}
+{"card_id": "701e3efb-b848-4b00-8472-1dcb73ed53dc", "from": "in_progress", "to": "review", "at": "2026-06-20T17:39:23.796944+00:00"}
+{"card_id": "701e3efb-b848-4b00-8472-1dcb73ed53dc", "from": "review", "to": "done", "at": "2026-06-20T17:39:26.432570+00:00"}
+{"card_id": "701e3efb-b848-4b00-8472-1dcb73ed53dc", "from": "done", "to": "review", "at": "2026-06-20T17:39:53.738471+00:00"}
+{"card_id": "92b3644a-b768-4db8-bffd-6b6372266225", "from": null, "to": "backlog", "at": "2026-06-20T17:41:29.443778+00:00"}
+{"card_id": "d5e78efb-37d4-4117-9a88-fc5b56d2de22", "from": null, "to": "backlog", "at": "2026-06-20T17:42:39.587466+00:00"}
+{"card_id": "f404916d-3aa2-4760-a4d0-9db789f6308d", "from": "in_progress", "to": "done", "at": "2026-06-21T13:02:38.476376+00:00"}
+{"card_id": "7f1ab7d2-dacd-45d1-9abf-9248e83b7c46", "from": "backlog", "to": "done", "at": "2026-06-21T13:20:44.773251+00:00"}
