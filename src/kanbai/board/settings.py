@@ -307,7 +307,7 @@ HEALTH_CYCLE_TIME_WATCH_DAYS: float = 5.0
 HEALTH_CYCLE_TIME_BAD_DAYS: float = 6.0
 
 # A5: Pull Rate 7d (started ÷ created) — lower is worse
-HEALTH_PULL_RATE_WATCH: float = 0.5
+HEALTH_PULL_RATE_WATCH: float = 0.35
 HEALTH_PULL_RATE_BAD: float = 0.2
 
 # A6: Median Backlog Age (days) — higher is worse

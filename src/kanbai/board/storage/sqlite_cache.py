@@ -180,8 +180,11 @@ def transition_flow_counts(
 
     Returns a dict with:
       - ``created``   – cards entering the board (from_col IS NULL)
-      - ``started``   – cards entering ``in_progress``
-      - ``completed`` – cards entering ``done``
+      - ``started``   – unique card IDs pulled into work: cards that entered
+                        ``in_progress`` PLUS cards that went straight to ``done``
+                        without ever having an ``in_progress`` transition (no
+                        double-counting — unique IDs only)
+      - ``completed`` – unique card IDs entering ``done``
 
     When ``epic`` is given, only transitions whose card currently belongs to
     that epic are counted (epic is a property of the card, not the event).
@@ -199,8 +202,15 @@ def transition_flow_counts(
             f"""
             SELECT
                 SUM(CASE WHEN t.from_col IS NULL THEN 1 ELSE 0 END) AS created,
-                SUM(CASE WHEN t.to_col = 'in_progress' THEN 1 ELSE 0 END) AS started,
-                SUM(CASE WHEN t.to_col = 'done' THEN 1 ELSE 0 END) AS completed
+                COUNT(DISTINCT CASE WHEN t.to_col = 'in_progress'
+                    THEN t.card_id END) AS started_ip,
+                COUNT(DISTINCT CASE WHEN t.to_col = 'done'
+                    AND t.card_id NOT IN (
+                        SELECT card_id FROM transitions WHERE to_col = 'in_progress'
+                    )
+                    THEN t.card_id END) AS started_skip,
+                COUNT(DISTINCT CASE WHEN t.to_col = 'done'
+                    THEN t.card_id END) AS completed
             FROM transitions t
             {join}
             WHERE t.at >= ? AND t.at < ?{epic_clause}
@@ -210,7 +220,7 @@ def transition_flow_counts(
 
     return {
         "created": int(rows["created"] or 0),
-        "started": int(rows["started"] or 0),
+        "started": int((rows["started_ip"] or 0) + (rows["started_skip"] or 0)),
         "completed": int(rows["completed"] or 0),
     }
 
@@ -1364,7 +1374,7 @@ def avg_cycle_time_days(days: int, epic: str | None = None) -> float | None:
     return round(total / count, 1) if count else None
 
 
-def median_cycle_time_days(days: int, epic: str | None = None) -> float | None:
+def median_cycle_time_days(days: int, epic: str | None = None) -> dict:
     """Median days-to-complete for cards done in the last ``days`` days.
 
     Days = done_at − created_at (same metric as cycle_time_histogram /
@@ -1881,53 +1891,113 @@ def completed_composition(days: int = 28, epic: str | None = None) -> dict:
 
 
 def daily_throughput_wip(days: int = 28, epic: str | None = None) -> list[dict]:
-    """Per-day WIP count and 7-day rolling throughput for the trend chart.
+    """Per-day max WIP count and 7-day rolling throughput for the trend chart.
 
     Returns [{"date": str, "wip": int, "throughput_7d": float | None}, ...] oldest first.
     throughput_7d = completed / started over trailing 7 days; None when no starts.
+    wip = maximum (in_progress + review) count observed at any point during each day,
+          computed by replaying the full transition log from the beginning so the
+          baseline WIP entering the display window is accurate.
     """
     from datetime import datetime, timedelta, timezone
 
-    cfd = cfd_data(days + 7, epic=epic)
-    cfd_by_date: dict[str, dict] = {r["date"]: r for r in cfd}
-
     now = datetime.now(timezone.utc)
-    cutoff = (now - timedelta(days=days + 7)).isoformat()
+    today = now.date()
+    display_start = today - timedelta(days=days - 1)
+    display_start_str = str(display_start)
+
     join = ""
     epic_clause = ""
-    sql_params: list = [cutoff]
+    epic_params: list = []
     if epic is not None:
         join = "JOIN cards c ON c.id = t.card_id"
         epic_clause = " AND c.epic = ?"
-        sql_params.append(epic)
+        epic_params = [epic]
+
     with _conn() as con:
-        rows = con.execute(
+        # Full transition history (all time) so we can reconstruct the WIP
+        # state entering the display window from the correct baseline.
+        all_rows = con.execute(
+            f"""
+            SELECT t.at, t.card_id, t.to_col
+            FROM transitions t {join}
+            WHERE t.to_col IS NOT NULL{epic_clause}
+            ORDER BY t.at ASC
+            """,
+            epic_params,
+        ).fetchall()
+
+        # Throughput: aggregated per-day counts within the rolling window
+        tp_cutoff = (now - timedelta(days=days + 7)).isoformat()
+        tp_rows = con.execute(
             f"""
             SELECT date(t.at) AS day, t.to_col, count(*) AS cnt
             FROM transitions t {join}
             WHERE t.at >= ?{epic_clause}
             GROUP BY date(t.at), t.to_col
             """,
-            sql_params,
+            [tp_cutoff] + epic_params,
         ).fetchall()
+
+    # ── Throughput ────────────────────────────────────────────────────────────
     daily_completed: dict[str, int] = {}
     daily_started: dict[str, int] = {}
-    for r in rows:
+    for r in tp_rows:
         day = r["day"]
         if r["to_col"] == "done":
             daily_completed[day] = daily_completed.get(day, 0) + r["cnt"]
         elif r["to_col"] == "in_progress":
             daily_started[day] = daily_started.get(day, 0) + r["cnt"]
 
-    today = datetime.now(timezone.utc).date()
+    # ── Max WIP reconstruction ────────────────────────────────────────────────
+    WIP_LANES = {"in_progress", "review"}
+    card_lanes: dict[str, str] = {}  # card_id → last known lane
+    wip_running = 0                  # maintained incrementally
+
+    def _apply(card_id: str, to_col: str) -> None:
+        nonlocal wip_running
+        old = card_lanes.get(card_id)
+        card_lanes[card_id] = to_col
+        was_wip = old in WIP_LANES if old is not None else False
+        is_wip  = to_col in WIP_LANES
+        if was_wip and not is_wip:
+            wip_running -= 1
+        elif not was_wip and is_wip:
+            wip_running += 1
+
+    # Group transitions by calendar day (YYYY-MM-DD prefix of ISO timestamp)
+    by_day: dict[str, list] = {}
+    for r in all_rows:
+        by_day.setdefault(r["at"][:10], []).append(r)
+
+    # Advance state through every day that precedes the display window
+    for day_str in sorted(by_day):
+        if day_str >= display_start_str:
+            break
+        for r in by_day[day_str]:
+            _apply(r["card_id"], r["to_col"])
+
+    # Walk the display window day by day, recording the highest WIP seen
+    max_wip_by_day: dict[str, int] = {}
+    for i in range(days):
+        d = display_start + timedelta(days=i)
+        d_str = str(d)
+        day_max = wip_running  # WIP at the start of this day
+        for r in by_day.get(d_str, []):
+            _apply(r["card_id"], r["to_col"])
+            if wip_running > day_max:
+                day_max = wip_running
+        max_wip_by_day[d_str] = day_max
+        # wip_running now holds WIP at end of day = start of next day
+
+    # ── Assemble result ───────────────────────────────────────────────────────
     result = []
     for i in range(days - 1, -1, -1):
         d = today - timedelta(days=i)
         d_str = str(d)
-        cfd_row = cfd_by_date.get(d_str, {})
-        wip = cfd_row.get("in_progress", 0) + cfd_row.get("review", 0)
+        wip = max_wip_by_day.get(d_str, 0)
         w_completed = sum(daily_completed.get(str(d - timedelta(days=j)), 0) for j in range(7))
-        w_started = sum(daily_started.get(str(d - timedelta(days=j)), 0) for j in range(7))
+        w_started   = sum(daily_started.get(str(d - timedelta(days=j)), 0) for j in range(7))
         tp = round(w_completed / w_started, 2) if w_started > 0 else None
         result.append({"date": d_str, "wip": wip, "throughput_7d": tp})
     return result
@@ -1938,6 +2008,11 @@ def daily_pull_rate(days: int = 28, epic: str | None = None) -> list[dict]:
 
     Returns [{"date": str, "pull_rate_7d": float | None}, ...] oldest first.
     pull_rate_7d = started / created over trailing 7 days; None when no creates.
+
+    ``started`` counts unique card IDs that either entered ``in_progress`` or
+    went straight to ``done`` without ever having an ``in_progress`` transition.
+    A 7-day rolling window unions card-ID sets across days so each card is
+    counted at most once per window regardless of how many events it fired.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -1945,28 +2020,47 @@ def daily_pull_rate(days: int = 28, epic: str | None = None) -> list[dict]:
     join = ""
     epic_clause = ""
     sql_params: list = [cutoff]
+    ever_ip_params: list = []
     if epic is not None:
         join = "JOIN cards c ON c.id = t.card_id"
         epic_clause = " AND c.epic = ?"
         sql_params.append(epic)
+        ever_ip_params.append(epic)
+
     with _conn() as con:
+        # Card IDs that were *ever* moved to in_progress (all time, no cutoff).
+        # Used to identify cards that skipped in_progress entirely.
+        ever_ip_rows = con.execute(
+            f"""
+            SELECT DISTINCT t.card_id
+            FROM transitions t {join}
+            WHERE t.to_col = 'in_progress'{epic_clause}
+            """,
+            ever_ip_params,
+        ).fetchall()
+        ever_started_ids: set[str] = {r["card_id"] for r in ever_ip_rows}
+
+        # Individual transition rows in the display window (card-level, not aggregated)
         rows = con.execute(
             f"""
-            SELECT date(t.at) AS day, t.from_col, t.to_col, count(*) AS cnt
+            SELECT date(t.at) AS day, t.card_id, t.from_col, t.to_col
             FROM transitions t {join}
             WHERE t.at >= ?{epic_clause}
-            GROUP BY date(t.at), t.from_col, t.to_col
             """,
             sql_params,
         ).fetchall()
+
     daily_created: dict[str, int] = {}
-    daily_started: dict[str, int] = {}
+    # Map day → set of unique card_ids counted as "started" that day
+    daily_started_ids: dict[str, set[str]] = {}
     for r in rows:
         day = r["day"]
         if r["from_col"] is None:  # card entering board = created
-            daily_created[day] = daily_created.get(day, 0) + r["cnt"]
-        if r["to_col"] == "in_progress":
-            daily_started[day] = daily_started.get(day, 0) + r["cnt"]
+            daily_created[day] = daily_created.get(day, 0) + 1
+        if r["to_col"] == "in_progress":  # normal pull
+            daily_started_ids.setdefault(day, set()).add(r["card_id"])
+        elif r["to_col"] == "done" and r["card_id"] not in ever_started_ids:  # skipped in_progress
+            daily_started_ids.setdefault(day, set()).add(r["card_id"])
 
     today = datetime.now(timezone.utc).date()
     result = []
@@ -1974,7 +2068,11 @@ def daily_pull_rate(days: int = 28, epic: str | None = None) -> list[dict]:
         d = today - timedelta(days=i)
         d_str = str(d)
         w_created = sum(daily_created.get(str(d - timedelta(days=j)), 0) for j in range(7))
-        w_started = sum(daily_started.get(str(d - timedelta(days=j)), 0) for j in range(7))
+        # Union card-ID sets across the 7-day window → each card counted once
+        w_started_ids: set[str] = set()
+        for j in range(7):
+            w_started_ids |= daily_started_ids.get(str(d - timedelta(days=j)), set())
+        w_started = len(w_started_ids)
         pr = round(w_started / w_created, 2) if w_created > 0 else None
         result.append({"date": d_str, "pull_rate_7d": pr})
     return result
