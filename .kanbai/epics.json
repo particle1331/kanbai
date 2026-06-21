@@ -6,7 +6,7 @@
     "comments": []
   },
   "Unassigned": {
-    "archived": true,
+    "archived": false,
     "archived_card_ids": [],
     "description": "",
     "comments": []
