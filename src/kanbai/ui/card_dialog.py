@@ -462,6 +462,7 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
     dlg = ft.AlertDialog(
         modal=True,
         title=ft.Text("New Card", size=16, weight=ft.FontWeight.W_600),
+        actions_alignment=ft.MainAxisAlignment.END,
         content=ft.Container(
             content=ft.Row(
                 [
@@ -508,10 +509,23 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
             padding=ft.Padding(0, 8, 0, 0),
         ),
         actions=[
-            ft.TextButton("Cancel", on_click=_cancel),
-            ft.FilledButton("Create", on_click=_save),
+            ft.FilledButton(
+                "Create", 
+                color="#FFFFFF", 
+                bgcolor="#1F6FEB", 
+                on_click=_save,
+                style=ft.ButtonStyle(
+                    shape=ft.RoundedRectangleBorder(radius=5),
+                    padding=ft.Padding(90, 0, 90, 0),
+                )
+            ),
+            ft.IconButton(
+                icon=ft.Icons.CANCEL,
+                icon_color="#ADBAC7",
+                tooltip="Cancel",
+                on_click=_cancel,
+            ),
         ],
-        actions_alignment=ft.MainAxisAlignment.END,
     )
     page.show_dialog(dlg)
 
@@ -585,13 +599,16 @@ def open_edit_dialog(
     # Persisted fold state so sections stay open/closed across re-renders.
     fold_state = {"rel": False, "comments": False, "att": False}
 
-    def _make_fold(state_key: str, title: str, body: ft.Control) -> ft.Column:
+    def _make_fold(state_key: str, title: "str | ft.Text", body: ft.Control) -> ft.Column:
         is_open = fold_state.get(state_key, False)
         toggle_icon = ft.Text(
             "−" if is_open else "+",
             size=16, weight=ft.FontWeight.W_700, color="#8B949E",
         )
         body.visible = is_open
+        title_widget = title if isinstance(title, ft.Text) else ft.Text(
+            title, size=12, weight=ft.FontWeight.W_600, color="#C9D1D9"
+        )
 
         def _toggle(e) -> None:
             new = not fold_state.get(state_key, False)
@@ -602,7 +619,7 @@ def open_edit_dialog(
 
         header = ft.Container(
             content=ft.Row(
-                [toggle_icon, ft.Text(title, size=12, weight=ft.FontWeight.W_600, color="#C9D1D9")],
+                [toggle_icon, title_widget],
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -768,7 +785,13 @@ def open_edit_dialog(
         else:
             subprocess.run(["xdg-open", path_str])
 
+    _att_fold_title = ft.Text(
+        f"Attachments ({len(card.attachments)})",
+        size=12, weight=ft.FontWeight.W_600, color="#C9D1D9",
+    )
+
     def _build_attachments() -> None:
+        _att_fold_title.value = f"Attachments ({len(card.attachments)})"
         att_col.controls.clear()
         if not card.attachments:
             att_col.controls.append(
@@ -898,7 +921,7 @@ def open_edit_dialog(
     def _attachments_section() -> ft.Control:
         return _make_fold(
             "att",
-            f"Attachments ({len(card.attachments)})",
+            _att_fold_title,
             ft.Column([att_col], spacing=2),
         )
 
