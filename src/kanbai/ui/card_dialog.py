@@ -597,7 +597,7 @@ def open_edit_dialog(
     links_col = ft.Column(spacing=2)
 
     # Persisted fold state so sections stay open/closed across re-renders.
-    fold_state = {"rel": False, "comments": False, "att": False, "checklist": bool(card.checklist)}
+    fold_state = {"rel": False, "comments": True, "att": False, "checklist": bool(card.checklist)}
 
     def _make_fold(state_key: str, title: "str | ft.Text", body: ft.Control) -> ft.Column:
         is_open = fold_state.get(state_key, False)
@@ -657,12 +657,15 @@ def open_edit_dialog(
         "question": "#DB8132",
     }
 
-    def _fmt_ts_parts(iso: str) -> tuple[str, str]:
+    def _fmt_ts_parts(iso: str) -> str:
         try:
             dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
-            return dt.strftime("%m/%d/%y"), dt.strftime("%H:%M")
+            now = datetime.now(dt.tzinfo)
+            show_year = (now - dt).days > 365
+            date_fmt = "%m/%d/%y" if show_year else "%m/%d"
+            return dt.strftime(f"{date_fmt} %H:%M")
         except (ValueError, AttributeError):
-            return iso, ""
+            return iso
 
     def _fmt_date(iso: str) -> str:
         if not iso:
@@ -694,13 +697,12 @@ def open_edit_dialog(
                     page.update()
                 threading.Thread(target=_do, daemon=True).start()
 
-            date_str, time_str = _fmt_ts_parts(cm.get("created_at", ""))
+            ts_str = _fmt_ts_parts(cm.get("created_at", ""))
             role = cm.get("role") or "note"
             role_color = _ROLE_COLORS.get(role, "#6E7681")
 
             timestamp_col_controls: list[ft.Control] = [
-                ft.Text(date_str, size=10, color="#6E7681"),
-                ft.Text(time_str, size=10, color="#6E7681"),
+                ft.Text(ts_str, size=10, color="#6E7681"),
             ]
             if role != "note":
                 timestamp_col_controls.append(
@@ -719,7 +721,7 @@ def open_edit_dialog(
                             ft.Column(
                                 timestamp_col_controls,
                                 spacing=1,
-                                width=52,
+                                width=76,
                             ),
                             ft.Text(
                                 cm.get("text", ""), size=12, color="#C9D1D9",
