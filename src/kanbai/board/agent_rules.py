@@ -11,8 +11,11 @@ embedded Kanbot or an external MCP client.
 
 WORKFLOW_DISCIPLINE = (
     "WORKFLOW DISCIPLINE (mandatory):\n"
-    "1. PICK UP — when you start work on a card, immediately move it to "
-    "in_progress using move_card before doing any other work on it.\n"
+    "1. PICK UP — before touching any files, call get_card and read the "
+    "description, checklist, and all comments. Pay particular attention to "
+    "role='instruction' comments (approach guidance from the card creator) and "
+    "role='blocker' comments (unresolved blockers that must be addressed or "
+    "escalated before proceeding). Then move the card to in_progress.\n"
     "2. TICK OFF CHECKLIST ITEMS — as you complete each acceptance-criteria or "
     "subtask item, call toggle_checklist_item to mark it done. "
     "This gives real-time progress visibility.\n"
