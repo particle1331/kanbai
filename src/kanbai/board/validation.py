@@ -191,6 +191,9 @@ def validate_attachment(src_path: str, current_count: int) -> None:
 def validate_file_ref(path: str, current_count: int) -> None:
     """Raise ``ValueError`` if the file reference path is invalid or limits are exceeded."""
     import re
+    from pathlib import Path
+    import kanbai.paths as _paths
+
     p = (path or "").strip()
     if not p:
         raise ValueError("file_ref: path must not be empty.")
@@ -213,6 +216,16 @@ def validate_file_ref(path: str, current_count: int) -> None:
         raise ValueError(
             "file_ref: invalid format. Use 'path/to/file' or 'path/to/file:10-30'."
         )
+
+    target = (_paths.PROJECT_ROOT / file_part).resolve()
+    try:
+        target.relative_to(_paths.PROJECT_ROOT.resolve())
+    except ValueError:
+        raise ValueError("file_ref: must stay within the target repository.")
+    if not target.exists():
+        raise ValueError(f"file_ref: file not found in target repository: {file_part}")
+    if not target.is_file():
+        raise ValueError(f"file_ref: target is not a file: {file_part}")
 
 
 def soft_warnings(

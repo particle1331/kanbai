@@ -597,7 +597,7 @@ def open_edit_dialog(
     links_col = ft.Column(spacing=2)
 
     # Persisted fold state so sections stay open/closed across re-renders.
-    fold_state = {"rel": False, "comments": True, "att": False, "checklist": bool(card.checklist)}
+    fold_state = {"rel": False, "comments": True, "att": False, "checklist": bool(card.checklist), "refs": bool(card.file_refs)}
 
     def _make_fold(state_key: str, title: "str | ft.Text", body: ft.Control) -> ft.Column:
         is_open = fold_state.get(state_key, False)
@@ -967,6 +967,112 @@ def open_edit_dialog(
             _att_fold_title,
             ft.Column([att_col], spacing=2),
         )
+
+    # ── File references ───────────────────────────────────────────────────────
+    file_refs_col = ft.Column(spacing=4)
+    file_ref_add_field = ft.TextField(
+        hint_text="Add file ref… (e.g. src/foo.py:10-30)",
+        expand=True,
+        text_size=12,
+        height=38,
+        content_padding=ft.Padding(10, 0, 10, 0),
+    )
+    _file_refs_title = ft.Text(
+        "", size=12, weight=ft.FontWeight.W_600, color="#C9D1D9"
+    )
+
+    def _file_refs_title_str() -> str:
+        refs = card.file_refs or []
+        return f"File references ({len(refs)})"
+
+    def _build_file_refs() -> None:
+        _file_refs_title.value = _file_refs_title_str()
+        file_refs_col.controls.clear()
+        refs = card.file_refs or []
+        if not refs:
+            file_refs_col.controls.append(
+                ft.Text("No file refs yet.", size=11, color="#6E7681", italic=True)
+            )
+            return
+        for ref in refs:
+            def _remove_ref(e, path=ref) -> None:
+                nonlocal card
+                def _do() -> None:
+                    nonlocal card
+                    err = operations.remove_file_ref(card_id, path)
+                    if err:
+                        op_error.value = err
+                    _refreshed = operations.get_card(card_id)
+                    if _refreshed is not None:
+                        card = _refreshed
+                    _build_file_refs()
+                    page.update()
+                threading.Thread(target=_do, daemon=True).start()
+
+            file_refs_col.controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(ft.Icons.DESCRIPTION_OUTLINED, size=14, color="#8B949E"),
+                            ft.Text(
+                                ref,
+                                size=12,
+                                color="#C9D1D9",
+                                expand=True,
+                                max_lines=2,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                                font_family="monospace",
+                            ),
+                            ft.IconButton(
+                                ft.Icons.CANCEL,
+                                icon_size=12,
+                                icon_color="#6E7681",
+                                on_click=_remove_ref,
+                                tooltip="Remove file ref",
+                                padding=ft.Padding(0, 0, 0, 0),
+                            ),
+                        ],
+                        spacing=4,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    bgcolor="#161B22",
+                    border_radius=6,
+                    padding=ft.Padding(8, 5, 4, 5),
+                )
+            )
+
+    def _add_file_ref(e) -> None:
+        nonlocal card
+        txt = (file_ref_add_field.value or "").strip()
+        if not txt:
+            return
+        file_ref_add_field.value = ""
+        file_ref_add_field.disabled = True
+        page.update()
+
+        def _do() -> None:
+            nonlocal card
+            err = operations.add_file_ref(card_id, txt)
+            if err:
+                op_error.value = err
+            _refreshed = operations.get_card(card_id)
+            if _refreshed is not None:
+                card = _refreshed
+            file_ref_add_field.disabled = False
+            _build_file_refs()
+            page.update()
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    file_ref_add_field.on_submit = _add_file_ref
+
+    def _file_refs_section() -> ft.Control:
+        _build_file_refs()
+        body = ft.Column(
+            [file_refs_col, file_ref_add_field],
+            spacing=8,
+        )
+        return _make_fold("refs", _file_refs_title, body)
 
     # ── Checklist ─────────────────────────────────────────────────────────────
     checklist_col = ft.Column(spacing=4)
@@ -1658,6 +1764,7 @@ def open_edit_dialog(
                 ft.Divider(height=1, color="#3E3E42"),
                 _make_fold("rel", f"Relationships ({rel_count})", ft.Column([links_col], spacing=2)),
                 _checklist_section(),
+                _file_refs_section(),
                 _attachments_section(),
             ],
             spacing=14,
@@ -1726,6 +1833,7 @@ def open_edit_dialog(
                     ft.Divider(height=1, color="#3E3E42"),
                     _make_fold("rel", "Relationships", rel_section),
                     _checklist_section(),
+                    _file_refs_section(),
                     _attachments_section(),
                 ],
                 spacing=12,

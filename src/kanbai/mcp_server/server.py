@@ -199,6 +199,7 @@ def get_card(card_id: str) -> dict | None:
         "epic": card.epic,
         "links": card.links,
         "attachments": card.attachments,
+        "file_refs": card.file_refs,
         "due_date": card.due_date,
         "comments": card.comments,
         "checklist": [{"index": i, "text": item["text"], "done": item.get("done", False)} for i, item in enumerate(checklist)],
@@ -434,6 +435,40 @@ def get_checklist(card_id: str) -> list[dict] | dict:
         "items": [{"index": i, "text": item["text"], "done": item.get("done", False)} for i, item in enumerate(checklist)],
         "completion": f"{done}/{len(checklist)}",
     }
+
+
+@tool("read")
+def get_file_refs(card_id: str) -> dict:
+    """Return all file references for a card with their raw path strings."""
+    card = operations.get_card(card_id)
+    if card is None:
+        return {"error": f"Card '{card_id}' not found."}
+    return {"items": list(card.file_refs or []), "count": len(card.file_refs or [])}
+
+
+@tool("write")
+def add_file_ref(card_id: str, path: str) -> dict:
+    """Attach a file reference to a card. Use a relative path with optional line range suffix, e.g. 'src/foo.py:10-30'."""
+    try:
+        err = operations.add_file_ref(card_id, path)
+    except Exception as ex:
+        return {"error": str(ex)}
+    if err:
+        return {"error": err}
+    _notify_board_changed()
+    card = operations.get_card(card_id)
+    return {"added": True, "items": list(card.file_refs or []) if card else []}
+
+
+@tool("write")
+def remove_file_ref(card_id: str, path: str) -> dict:
+    """Remove a file reference from a card by its exact raw path string."""
+    err = operations.remove_file_ref(card_id, path)
+    if err:
+        return {"error": err}
+    _notify_board_changed()
+    card = operations.get_card(card_id)
+    return {"removed": True, "items": list(card.file_refs or []) if card else []}
 
 
 @tool("write")

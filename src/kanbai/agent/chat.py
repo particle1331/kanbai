@@ -286,7 +286,7 @@ def _dispatch_tool(name: str, args: dict) -> str:
             "id": card.id, "number": card.number, "title": card.title, "lane": card.lane,
             "description": card.description, "priority": card.priority,
             "tags": card.tags, "archived": card.archived, "epic": card.epic,
-            "links": card.links, "comments": card.comments,
+            "links": card.links, "comments": card.comments, "file_refs": card.file_refs,
             "checklist": [{"index": i, "text": it["text"], "done": it.get("done", False)} for i, it in enumerate(checklist)],
             "checklist_completion": f"{done}/{len(checklist)}",
         })
