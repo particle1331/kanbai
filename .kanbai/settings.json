@@ -7,16 +7,16 @@
   "max_agent_steps": 8,
   "token_usage": {
     "nano": {
-      "prompt_tokens": 373907,
-      "completion_tokens": 4780
+      "prompt_tokens": 377291,
+      "completion_tokens": 4867
     },
     "mini": {
       "prompt_tokens": 8931,
       "completion_tokens": 204
     },
     "base": {
-      "prompt_tokens": 11803,
-      "completion_tokens": 1928
+      "prompt_tokens": 24729,
+      "completion_tokens": 2029
     }
   },
   "git_tracking": true

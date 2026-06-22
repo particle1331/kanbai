@@ -24,6 +24,9 @@ MAX_EPIC_LEN    = 100
 MAX_CARDS_PER_EPIC = 500  # active cards per epic (Unassigned counts as one bucket)
 MAX_ATTACHMENTS = 20
 MAX_ATTACHMENT_SIZE_MB = 100
+MAX_CHECKLIST_ITEMS = 100
+MAX_CHECKLIST_TEXT = 500
+VALID_COMMENT_ROLES = frozenset(["note", "instruction", "update", "decision", "blocker", "question"])
 BLOCKED_EXTENSIONS = {
     ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".wsf",
     ".sh", ".bash", ".zsh",
@@ -132,6 +135,28 @@ def validate_comment(text: str, current_count: int) -> None:
     if current_count >= MAX_COMMENTS:
         raise ValueError(
             f"comments: maximum {MAX_COMMENTS} comments per card reached."
+        )
+
+
+def validate_comment_role(role: str) -> None:
+    """Raise ``ValueError`` if *role* is not a recognised comment role."""
+    if role not in VALID_COMMENT_ROLES:
+        valid = ", ".join(sorted(VALID_COMMENT_ROLES))
+        raise ValueError(f"comment role: '{role}' is not valid. Choose from: {valid}.")
+
+
+def validate_checklist_item(text: str, current_count: int) -> None:
+    """Raise ``ValueError`` if the checklist item text or count exceeds hard limits."""
+    t = (text or "").strip()
+    if not t:
+        raise ValueError("checklist item: text must not be empty.")
+    if len(t) > MAX_CHECKLIST_TEXT:
+        raise ValueError(
+            f"checklist item: maximum {MAX_CHECKLIST_TEXT} characters allowed (got {len(t)})."
+        )
+    if current_count >= MAX_CHECKLIST_ITEMS:
+        raise ValueError(
+            f"checklist: maximum {MAX_CHECKLIST_ITEMS} items per card reached."
         )
 
 

@@ -597,7 +597,7 @@ def open_edit_dialog(
     links_col = ft.Column(spacing=2)
 
     # Persisted fold state so sections stay open/closed across re-renders.
-    fold_state = {"rel": False, "comments": False, "att": False}
+    fold_state = {"rel": False, "comments": False, "att": False, "checklist": True}
 
     def _make_fold(state_key: str, title: "str | ft.Text", body: ft.Control) -> ft.Column:
         is_open = fold_state.get(state_key, False)
@@ -632,11 +632,30 @@ def open_edit_dialog(
 
     # ── Comments ──────────────────────────────────────────────────────────────
     comments_col = ft.Column(spacing=8)
+    comment_role_dd = ft.Dropdown(
+        value="note",
+        options=[
+            ft.dropdown.Option(r, r)
+            for r in ["note", "instruction", "update", "decision", "blocker", "question"]
+        ],
+        width=126,
+        text_size=11,
+        content_padding=ft.Padding(8, 0, 8, 0),
+    )
     comment_field = ft.TextField(
         hint_text="Add a comment… (press Enter to post)",
         expand=True,
         on_submit=lambda e: _add_comment(e),
     )
+
+    _ROLE_COLORS: dict[str, str] = {
+        "note": "#6E7681",
+        "instruction": "#58A6FF",
+        "update": "#8B949E",
+        "decision": "#56D364",
+        "blocker": "#F85149",
+        "question": "#DB8132",
+    }
 
     def _fmt_ts_parts(iso: str) -> tuple[str, str]:
         try:
@@ -676,16 +695,30 @@ def open_edit_dialog(
                 threading.Thread(target=_do, daemon=True).start()
 
             date_str, time_str = _fmt_ts_parts(cm.get("created_at", ""))
+            role = cm.get("role") or "note"
+            role_color = _ROLE_COLORS.get(role, "#6E7681")
+
+            timestamp_col_controls: list[ft.Control] = [
+                ft.Text(date_str, size=10, color="#6E7681"),
+                ft.Text(time_str, size=10, color="#6E7681"),
+            ]
+            if role != "note":
+                timestamp_col_controls.append(
+                    ft.Container(
+                        content=ft.Text(role.upper(), size=8, color=role_color, weight=ft.FontWeight.W_700),
+                        bgcolor="#21262D",
+                        border_radius=3,
+                        padding=ft.Padding(3, 1, 3, 1),
+                    )
+                )
+
             comments_col.controls.append(
                 ft.Container(
                     content=ft.Row(
                         [
                             ft.Column(
-                                [
-                                    ft.Text(date_str, size=10, color="#6E7681"),
-                                    ft.Text(time_str, size=10, color="#6E7681"),
-                                ],
-                                spacing=0,
+                                timestamp_col_controls,
+                                spacing=1,
                                 width=52,
                             ),
                             ft.Text(
@@ -704,6 +737,7 @@ def open_edit_dialog(
                     bgcolor="#161B22",
                     border_radius=6,
                     padding=ft.Padding(8, 6, 8, 6),
+                    border=ft.Border(left=ft.BorderSide(3, role_color)),
                 )
             )
 
@@ -712,13 +746,14 @@ def open_edit_dialog(
         txt = (comment_field.value or "").strip()
         if not txt:
             return
+        role = comment_role_dd.value or "note"
         comment_field.value = ""
         comment_field.disabled = True
         page.update()
 
         def _do() -> None:
             nonlocal card
-            operations.add_comment(card_id, txt)
+            operations.add_comment(card_id, txt, role=role)
             _refreshed = operations.get_card(card_id)
             if _refreshed is not None:
                 card = _refreshed
@@ -732,7 +767,13 @@ def open_edit_dialog(
         _build_comments()
         children: list[ft.Control] = [comments_col]
         if editable:
-            children.append(comment_field)
+            children.append(
+                ft.Row(
+                    [comment_role_dd, comment_field],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+            )
         body = ft.Column(children, spacing=8)
         return _make_fold("comments", f"Comments ({len(card.comments)})", body)
 
@@ -924,6 +965,145 @@ def open_edit_dialog(
             _att_fold_title,
             ft.Column([att_col], spacing=2),
         )
+
+    # ── Checklist ─────────────────────────────────────────────────────────────
+    checklist_col = ft.Column(spacing=4)
+    checklist_add_field = ft.TextField(
+        hint_text="Add item… (Enter to add)",
+        expand=True,
+        text_size=12,
+        height=38,
+        content_padding=ft.Padding(10, 0, 10, 0),
+    )
+    _checklist_title = ft.Text(
+        "", size=12, weight=ft.FontWeight.W_600, color="#C9D1D9"
+    )
+
+    def _checklist_title_str() -> str:
+        items = card.checklist or []
+        done = sum(1 for item in items if item.get("done"))
+        return f"Checklist ({done}/{len(items)})"
+
+    def _build_checklist() -> None:
+        _checklist_title.value = _checklist_title_str()
+        checklist_col.controls.clear()
+        items = card.checklist or []
+        if not items:
+            checklist_col.controls.append(
+                ft.Text("No items yet.", size=11, color="#6E7681", italic=True)
+            )
+            return
+        done_count = sum(1 for item in items if item.get("done"))
+        total = len(items)
+        # Progress bar
+        checklist_col.controls.append(
+            ft.Column(
+                [
+                    ft.Text(
+                        f"{done_count}/{total} done",
+                        size=10,
+                        color="#8B949E",
+                    ),
+                    ft.ProgressBar(
+                        value=done_count / total if total else 0,
+                        bgcolor="#21262D",
+                        color="#56D364",
+                        height=4,
+                        border_radius=2,
+                    ),
+                ],
+                spacing=3,
+            )
+        )
+        for i, item in enumerate(items):
+            def _toggle_item(e, idx=i) -> None:
+                nonlocal card
+                def _do() -> None:
+                    nonlocal card
+                    operations.toggle_checklist_item(card_id, idx)
+                    _refreshed = operations.get_card(card_id)
+                    if _refreshed is not None:
+                        card = _refreshed
+                    _build_checklist()
+                    page.update()
+                threading.Thread(target=_do, daemon=True).start()
+
+            def _delete_item(e, idx=i) -> None:
+                nonlocal card
+                def _do() -> None:
+                    nonlocal card
+                    operations.remove_checklist_item(card_id, idx)
+                    _refreshed = operations.get_card(card_id)
+                    if _refreshed is not None:
+                        card = _refreshed
+                    _build_checklist()
+                    page.update()
+                threading.Thread(target=_do, daemon=True).start()
+
+            text_color = "#6E7681" if item.get("done") else "#C9D1D9"
+            checklist_col.controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Checkbox(
+                                value=item.get("done", False),
+                                on_change=_toggle_item,
+                                fill_color={ft.ControlState.SELECTED: "#56D364", ft.ControlState.DEFAULT: "#30363D"},
+                                check_color="#0d1117",
+                                tristate=False,
+                            ),
+                            ft.Text(
+                                item["text"], size=12, color=text_color,
+                                expand=True,
+                                max_lines=3,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            ft.IconButton(
+                                ft.Icons.CANCEL, icon_size=12, icon_color="#6E7681",
+                                on_click=_delete_item, tooltip="Remove item",
+                                padding=ft.Padding(0, 0, 0, 0),
+                            ),
+                        ],
+                        spacing=4,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.Padding(0, 1, 0, 1),
+                )
+            )
+
+    def _add_checklist_item(e) -> None:
+        nonlocal card
+        txt = (checklist_add_field.value or "").strip()
+        if not txt:
+            return
+        checklist_add_field.value = ""
+        checklist_add_field.disabled = True
+        page.update()
+
+        def _do() -> None:
+            nonlocal card
+            try:
+                operations.add_checklist_item(card_id, txt)
+            except ValueError:
+                pass
+            _refreshed = operations.get_card(card_id)
+            if _refreshed is not None:
+                card = _refreshed
+            checklist_add_field.disabled = False
+            _build_checklist()
+            page.update()
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    checklist_add_field.on_submit = _add_checklist_item
+
+    def _checklist_section() -> ft.Control:
+        _build_checklist()
+        body = ft.Column(
+            [checklist_col, checklist_add_field],
+            spacing=8,
+        )
+        return _make_fold("checklist", _checklist_title, body)
 
     def _build_link_rows(edit_mode: bool = False) -> None:
         links_col.controls.clear()
@@ -1473,6 +1653,7 @@ def open_edit_dialog(
                 ),
                 ft.Divider(height=1, color="#3E3E42"),
                 _make_fold("rel", f"Relationships ({rel_count})", ft.Column([links_col], spacing=2)),
+                _checklist_section(),
                 _comments_section(editable=True),
                 _attachments_section(),
             ],
@@ -1539,6 +1720,7 @@ def open_edit_dialog(
                     op_error,
                     ft.Divider(height=1, color="#3E3E42"),
                     _make_fold("rel", "Relationships", rel_section),
+                    _checklist_section(),
                     _comments_section(editable=True),
                     _attachments_section(),
                 ],

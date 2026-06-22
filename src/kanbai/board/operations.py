@@ -185,8 +185,8 @@ def update_card(
     return card
 
 
-def add_comment(card_id: str, text: str) -> Card | None:
-    """Append a timestamped comment to a card."""
+def add_comment(card_id: str, text: str, role: str = "note") -> Card | None:
+    """Append a timestamped comment (with an optional role) to a card."""
     text = (text or "").strip()
     if not text:
         return None
@@ -194,7 +194,8 @@ def add_comment(card_id: str, text: str) -> Card | None:
     if not card:
         return None
     _validation.validate_comment(text, current_count=len(card.comments))
-    card.comments.append({"id": str(uuid.uuid4()), "text": text, "created_at": _now()})
+    _validation.validate_comment_role(role)
+    card.comments.append({"id": str(uuid.uuid4()), "text": text, "created_at": _now(), "role": role})
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
@@ -212,6 +213,60 @@ def delete_comment(card_id: str, comment_id: str) -> Card | None:
         card.updated_at = _now()
         markdown_store.write_card(card)
         sqlite_cache.upsert_card(card)
+    return card
+
+
+# ── Checklist operations ──────────────────────────────────────────────────────
+
+def add_checklist_item(
+    card_id: str,
+    text: str,
+    position: int | None = None,
+) -> Card | None:
+    """Add a checklist item to a card, optionally at a specific 0-based position."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    card = markdown_store.read_card(card_id)
+    if not card:
+        return None
+    _validation.validate_checklist_item(text, current_count=len(card.checklist))
+    item = {"text": text, "done": False}
+    if position is not None and 0 <= position <= len(card.checklist):
+        card.checklist.insert(position, item)
+    else:
+        card.checklist.append(item)
+    card.updated_at = _now()
+    markdown_store.write_card(card)
+    sqlite_cache.upsert_card(card)
+    return card
+
+
+def toggle_checklist_item(card_id: str, index: int) -> Card | None:
+    """Toggle the done/undone state of a checklist item by its 0-based index."""
+    card = markdown_store.read_card(card_id)
+    if not card:
+        return None
+    if index < 0 or index >= len(card.checklist):
+        return None
+    card.checklist[index]["done"] = not card.checklist[index].get("done", False)
+    card.updated_at = _now()
+    markdown_store.write_card(card)
+    sqlite_cache.upsert_card(card)
+    return card
+
+
+def remove_checklist_item(card_id: str, index: int) -> Card | None:
+    """Remove a checklist item by its 0-based index."""
+    card = markdown_store.read_card(card_id)
+    if not card:
+        return None
+    if index < 0 or index >= len(card.checklist):
+        return None
+    card.checklist.pop(index)
+    card.updated_at = _now()
+    markdown_store.write_card(card)
+    sqlite_cache.upsert_card(card)
     return card
 
 

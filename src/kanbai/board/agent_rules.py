@@ -48,3 +48,21 @@ CARD_CREATION_DEFAULTS = (
 # Convenience constant — use this unless you need to include only a subset.
 
 SHARED_RULES = WORKFLOW_DISCIPLINE + "\n" + CARD_CREATION_DEFAULTS
+
+
+# ── Comment role discipline ────────────────────────────────────────────
+# Use the role parameter of add_card_comment to categorise every comment.
+
+COMMENT_ROLE_RULES = (
+    "COMMENT ROLES (use the role= parameter of add_card_comment):\n"
+    "  \u2022 instruction \u2014 human directive to agent; use when relaying a task or approach.\n"
+    "  \u2022 update      \u2014 agent progress report; use when describing what was completed.\n"
+    "  \u2022 decision    \u2014 architectural or design choice; document the reasoning.\n"
+    "  \u2022 blocker     \u2014 something preventing progress that needs human input.\n"
+    "  \u2022 question    \u2014 agent asking for clarification before proceeding.\n"
+    "  \u2022 note        \u2014 everything else (default if role is omitted).\n"
+    "Always set an explicit role \u2014 never rely on the default 'note' unless the "
+    "comment genuinely does not fit any other category.\n"
+)
+
+SHARED_RULES = WORKFLOW_DISCIPLINE + "\n" + CARD_CREATION_DEFAULTS + "\n" + COMMENT_ROLE_RULES

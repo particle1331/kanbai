@@ -128,6 +128,9 @@ def get_card(card_id: str) -> dict | None:
     card = operations.get_card(card_id)
     if not card:
         return None
+    checklist = card.checklist or []
+    done_count = sum(1 for item in checklist if item.get("done"))
+    total_count = len(checklist)
     return {
         "id": card.id,
         "number": card.number,
@@ -144,6 +147,8 @@ def get_card(card_id: str) -> dict | None:
         "attachments": card.attachments,
         "due_date": card.due_date,
         "comments": card.comments,
+        "checklist": [{"index": i, "text": item["text"], "done": item.get("done", False)} for i, item in enumerate(checklist)],
+        "checklist_completion": f"{done_count}/{total_count}",
     }
 
 
@@ -296,10 +301,19 @@ def delete_epic_comment(epic_name: str, comment_id: str) -> dict:
 
 
 @tool("write")
-def add_card_comment(card_id: str, text: str) -> dict:
-    """Add a comment to a card. Use this to log notes, decisions, or status updates about the card."""
+def add_card_comment(card_id: str, text: str, role: str = "note") -> dict:
+    """Add a typed comment to a card.
+
+    role controls the comment's purpose and display colour:
+      • note        — general remark (default, grey)
+      • instruction — human tells agent what to do (blue)
+      • update      — agent reports progress (grey)
+      • decision    — records a choice made (green)
+      • blocker     — flags something needing human input (red)
+      • question    — agent asks for clarification (orange)
+    """
     try:
-        card = operations.add_comment(card_id, text)
+        card = operations.add_comment(card_id, text, role=role)
     except ValueError as ex:
         return {"error": str(ex)}
     if card is None:
@@ -315,6 +329,57 @@ def delete_card_comment(card_id: str, comment_id: str) -> dict:
     if card is not None:
         _notify_board_changed()
     return {"deleted": card is not None}
+
+
+# ── Checklist tools ────────────────────────────────────────────────────────────────
+
+@tool("write")
+def add_checklist_item(card_id: str, text: str, position: int | None = None) -> dict:
+    """Add an item to a card's checklist. Optionally insert at a 0-based position; omit to append."""
+    try:
+        card = operations.add_checklist_item(card_id, text, position=position)
+    except ValueError as ex:
+        return {"error": str(ex)}
+    if card is None:
+        return {"error": f"Card '{card_id}' not found."}
+    _notify_board_changed()
+    idx = len(card.checklist) - 1 if position is None else position
+    return {"index": idx, "text": card.checklist[idx]["text"], "done": card.checklist[idx]["done"]}
+
+
+@tool("write")
+def toggle_checklist_item(card_id: str, item_index: int) -> dict:
+    """Toggle the done/undone state of a checklist item by its 0-based index."""
+    card = operations.toggle_checklist_item(card_id, item_index)
+    if card is None:
+        return {"error": f"Card '{card_id}' not found or index out of range."}
+    _notify_board_changed()
+    item = card.checklist[item_index]
+    return {"index": item_index, "text": item["text"], "done": item.get("done", False)}
+
+
+@tool("write")
+def remove_checklist_item(card_id: str, item_index: int) -> dict:
+    """Remove a checklist item by its 0-based index."""
+    card = operations.remove_checklist_item(card_id, item_index)
+    if card is None:
+        return {"error": f"Card '{card_id}' not found or index out of range."}
+    _notify_board_changed()
+    return {"deleted": True, "remaining": len(card.checklist)}
+
+
+@tool("read")
+def get_checklist(card_id: str) -> list[dict] | dict:
+    """Return all checklist items for a card with their index, text, done state, and overall completion stats."""
+    card = operations.get_card(card_id)
+    if card is None:
+        return {"error": f"Card '{card_id}' not found."}
+    checklist = card.checklist or []
+    done = sum(1 for item in checklist if item.get("done"))
+    return {
+        "items": [{"index": i, "text": item["text"], "done": item.get("done", False)} for i, item in enumerate(checklist)],
+        "completion": f"{done}/{len(checklist)}",
+    }
 
 
 @tool("write")
