@@ -597,7 +597,7 @@ def open_edit_dialog(
     links_col = ft.Column(spacing=2)
 
     # Persisted fold state so sections stay open/closed across re-renders.
-    fold_state = {"rel": False, "comments": False, "att": False, "checklist": True}
+    fold_state = {"rel": False, "comments": False, "att": False, "checklist": bool(card.checklist)}
 
     def _make_fold(state_key: str, title: "str | ft.Text", body: ft.Control) -> ft.Column:
         is_open = fold_state.get(state_key, False)
@@ -1582,6 +1582,8 @@ def open_edit_dialog(
                     ),
                     ft.Divider(height=1, color="#3E3E42"),
                     desc_widget,
+                    ft.Divider(height=1, color="#3E3E42"),
+                    _comments_section(editable=True),
                 ],
                 spacing=12,
                 scroll=ft.ScrollMode.AUTO,
@@ -1654,7 +1656,6 @@ def open_edit_dialog(
                 ft.Divider(height=1, color="#3E3E42"),
                 _make_fold("rel", f"Relationships ({rel_count})", ft.Column([links_col], spacing=2)),
                 _checklist_section(),
-                _comments_section(editable=True),
                 _attachments_section(),
             ],
             spacing=14,
@@ -1679,7 +1680,9 @@ def open_edit_dialog(
 
         left_col = ft.Container(
             content=ft.Column(
-                [ft.Container(height=5), title_field, desc_field],
+                [ft.Container(height=5), title_field, desc_field,
+                 ft.Divider(height=1, color="#3E3E42"),
+                 _comments_section(editable=True)],
                 spacing=10,
                 expand=True,
                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
@@ -1721,7 +1724,6 @@ def open_edit_dialog(
                     ft.Divider(height=1, color="#3E3E42"),
                     _make_fold("rel", "Relationships", rel_section),
                     _checklist_section(),
-                    _comments_section(editable=True),
                     _attachments_section(),
                 ],
                 spacing=12,
