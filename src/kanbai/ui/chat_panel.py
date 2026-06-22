@@ -33,7 +33,7 @@ class ChatPanel:
     def _check_ai_config(self) -> bool:
         """Return True if AI chat is properly configured."""
         import os
-        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
+        endpoint = os.environ.get("AZURE_OPENAI_BASE_URL", "").strip()
         api_key = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
         if not endpoint or not api_key:
             return False
@@ -51,7 +51,7 @@ class ChatPanel:
             "configuration. See the AI Chat Setup section in\n"
             ".kanbai/README.md for setup instructions.\n\n"
             "Required:\n"
-            "  1. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env\n"
+            "  1. Set AZURE_OPENAI_BASE_URL and AZURE_OPENAI_API_KEY in .env\n"
             "  2. Configure model deployments in .kanbai/models.yml\n"
             "  3. Set the deployment env vars in .env"
         )

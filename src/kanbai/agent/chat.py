@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from openai import AzureOpenAI
+from openai import OpenAI, OpenAI
 
 from kanbai.board import epics as _epics
 from kanbai.board import operations
@@ -382,26 +382,22 @@ def _dispatch_tool(name: str, args: dict) -> str:
 
     return json.dumps({"error": "unknown_tool", "name": name})
 
-_client_cache: AzureOpenAI | None = None
+_client_cache: OpenAI | None = None
 _client_cache_key: tuple[str, str, str] | None = None
 
 
-def _make_client() -> AzureOpenAI:
+def _make_client() -> OpenAI:
     global _client_cache, _client_cache_key
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or ""
+    endpoint = os.environ.get("AZURE_OPENAI_BASE_URL") or ""
     api_key = os.environ.get("AZURE_OPENAI_API_KEY") or ""
     if not endpoint or not api_key:
         raise RuntimeError(
-            "Azure OpenAI not configured. Set AZURE_OPENAI_ENDPOINT and "
+            "Azure OpenAI not configured. Set AZURE_OPENAI_BASE_URL and "
             "AZURE_OPENAI_API_KEY in your .env file."
         )
     cache_key = (endpoint, api_key, _AZURE_API_VERSION)
     if _client_cache is None or _client_cache_key != cache_key:
-        _client_cache = AzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=endpoint,
-            api_version=_AZURE_API_VERSION,
-        )
+        _client_cache = OpenAI(api_key=api_key, base_url=endpoint)
         _client_cache_key = cache_key
     return _client_cache
 
