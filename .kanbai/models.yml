@@ -10,6 +10,3 @@ models:
 
   - handle: base
     env_var: AZURE_OPENAI_DEPLOYMENT_BASE
-
-  - handle: codex
-    env_var: AZURE_OPENAI_DEPLOYMENT_CODEX

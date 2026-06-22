@@ -92,7 +92,7 @@ an Azure OpenAI deployment. Create a `.env` file in your project root:
 
 ```bash
 # .env — required for the kanbai chat agent
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_BASE_URL=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key-here
 ```
 
