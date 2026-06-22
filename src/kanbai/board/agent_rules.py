@@ -13,17 +13,20 @@ WORKFLOW_DISCIPLINE = (
     "WORKFLOW DISCIPLINE (mandatory):\n"
     "1. PICK UP — when you start work on a card, immediately move it to "
     "in_progress using move_card before doing any other work on it.\n"
-    "2. LOG PROGRESS — before moving to review, add a comment with "
+    "2. TICK OFF CHECKLIST ITEMS — as you complete each acceptance-criteria or "
+    "subtask item, call toggle_checklist_item to mark it done. "
+    "This gives real-time progress visibility.\n"
+    "3. LOG PROGRESS — before moving to review, add a comment with "
     "role='update' summarising what was done. Cover:\n"
     "   a. What you understood the task to be.\n"
     "   b. Any problems or edge-cases you encountered.\n"
     "   c. What you changed and why.\n"
     "Keep the card description clean — it defines the task; "
     "comments are the work log. Never append timestamped sections to the description.\n"
-    "3. COMMIT — stage and commit all changed files with a descriptive "
+    "4. COMMIT — stage and commit all changed files with a descriptive "
     "conventional-commit message (feat/fix/refactor/chore/docs). "
     "Skip only for pure board housekeeping where no file outside .kanbai/ changed.\n"
-    "4. HAND OFF — only after committing, move the card to review.\n"
+    "5. HAND OFF — only after committing, move the card to review.\n"
     "Never skip or reorder these steps. "
     "backlog → in_progress → review is the expected path for every card.\n"
 )
@@ -42,27 +45,50 @@ CARD_CREATION_DEFAULTS = (
     "behaviour). Derive 1–2 additional tags from the title, description, and epic.\n"
     "  • description — write a concise task summary (1–3 sentences) describing "
     "what needs to be done, sized for 1–6 days of work.\n"
+    "  • checklist — after creating the card, populate its checklist with "
+    "acceptance criteria and key subtasks using add_checklist_item. "
+    "Draw items from the description or any explicit AC; aim for 3–8 concrete, "
+    "verifiable items. Omit only if the task is genuinely trivial (< 1 hour).\n"
+)
+
+# ── Checklist discipline ──────────────────────────────────────────────────────
+# Rules for maintaining the checklist as a live contract during execution.
+
+CHECKLIST_DISCIPLINE = (
+    "CHECKLIST DISCIPLINE:\n"
+    "The checklist is the live contract for a card. Agents may adapt it during "
+    "execution, but every change must be justified with a comment:\n"
+    "  • Adding an item — if you discover a necessary subtask not in the original "
+    "AC, add it with add_checklist_item and post a role='decision' comment "
+    "explaining why it was added.\n"
+    "  • Skipping an item — if an AC item is out of scope, already satisfied, or "
+    "intentionally deferred, remove it with remove_checklist_item and post a "
+    "role='decision' comment explaining the rationale.\n"
+    "  • Never silently skip unchecked items when handing off to review — "
+    "every unchecked item must either be ticked (done) or removed with justification.\n"
+)
+
+# ── Comment role discipline ───────────────────────────────────────────────────
+# Use the role parameter of add_card_comment to categorise every comment.
+
+COMMENT_ROLE_RULES = (
+    "COMMENT ROLES (use the role= parameter of add_card_comment):\n"
+    "  • instruction — human directive to agent; use when relaying a task or approach.\n"
+    "  • update      — agent progress report; use when describing what was completed.\n"
+    "  • decision    — architectural or design choice, or checklist change justification.\n"
+    "  • blocker     — something preventing progress that needs human input.\n"
+    "  • question    — agent asking for clarification before proceeding.\n"
+    "  • note        — everything else (default if role is omitted).\n"
+    "Always set an explicit role — never rely on the default 'note' unless the "
+    "comment genuinely does not fit any other category.\n"
 )
 
 # ── Combined rules string ─────────────────────────────────────────────────────
 # Convenience constant — use this unless you need to include only a subset.
 
-SHARED_RULES = WORKFLOW_DISCIPLINE + "\n" + CARD_CREATION_DEFAULTS
-
-
-# ── Comment role discipline ────────────────────────────────────────────
-# Use the role parameter of add_card_comment to categorise every comment.
-
-COMMENT_ROLE_RULES = (
-    "COMMENT ROLES (use the role= parameter of add_card_comment):\n"
-    "  \u2022 instruction \u2014 human directive to agent; use when relaying a task or approach.\n"
-    "  \u2022 update      \u2014 agent progress report; use when describing what was completed.\n"
-    "  \u2022 decision    \u2014 architectural or design choice; document the reasoning.\n"
-    "  \u2022 blocker     \u2014 something preventing progress that needs human input.\n"
-    "  \u2022 question    \u2014 agent asking for clarification before proceeding.\n"
-    "  \u2022 note        \u2014 everything else (default if role is omitted).\n"
-    "Always set an explicit role \u2014 never rely on the default 'note' unless the "
-    "comment genuinely does not fit any other category.\n"
+SHARED_RULES = (
+    WORKFLOW_DISCIPLINE + "\n"
+    + CARD_CREATION_DEFAULTS + "\n"
+    + CHECKLIST_DISCIPLINE + "\n"
+    + COMMENT_ROLE_RULES
 )
-
-SHARED_RULES = WORKFLOW_DISCIPLINE + "\n" + CARD_CREATION_DEFAULTS + "\n" + COMMENT_ROLE_RULES
