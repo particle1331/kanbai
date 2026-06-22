@@ -13,256 +13,21 @@ from kanbai.board.agent_rules import SHARED_RULES
 from kanbai.board.models import _UNSET
 from kanbai.board.settings import ModelDef, ReasoningEffort
 
-_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "create_card",
-            "description": "Create a new card on the Kanban board",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "lane": {
-                        "type": "string",
-                        "enum": ["backlog", "in_progress", "review", "done"],
-                    },
-                    "description": {"type": "string"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "priority": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high"],
-                    },
-                    "epic": {"type": "string", "description": "Epic name to assign. Omit for Unassigned."},
-                },
-                "required": ["title", "lane"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_cards",
-            "description": "List cards from the board, optionally filtered by lane, tags, or text",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "lane": {"type": "string"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "archived": {"type": "boolean"},
-                    "query": {"type": "string"},
-                    "epic": {"type": "string", "description": "Filter by epic. Omit for no filter. 'Unassigned' for cards with no epic."},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_card",
-            "description": "Get full details of a card by its ID",
-            "parameters": {
-                "type": "object",
-                "properties": {"card_id": {"type": "string"}},
-                "required": ["card_id"],
-            },
-        },
-    },
+from kanbai.mcp_server.server import _TIER_RANK, _TOOL_REGISTRY, call_tool_sync, get_openai_tools
+
+# Chat-only tools (no MCP equivalent).
+# All board tools (create_card, get_card, add_card_comment, toggle_checklist_item, etc.)
+# are sourced automatically from the MCP registry via get_openai_tools().
+_CHAT_ONLY_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "get_card_by_number",
-            "description": "Look up a card by its task number (e.g. 26 for #26). Returns full card details including card_id.",
+            "description": "Look up a card by its task number (e.g. 26 for #26). Returns full card details including card_id, comments, and checklist.",
             "parameters": {
                 "type": "object",
                 "properties": {"number": {"type": "integer", "description": "The task number, e.g. 26"}},
                 "required": ["number"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_card",
-            "description": "Update a card's title, description, tags, or priority",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "card_id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "priority": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high"],
-                    },
-                    "epic": {"type": ["string", "null"], "description": "Set epic name, or null for Unassigned. Omit to leave unchanged."},
-                },
-                "required": ["card_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "move_card",
-            "description": "Move a card to a different lane",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "card_id": {"type": "string"},
-                    "target_lane": {
-                        "type": "string",
-                        "enum": ["backlog", "in_progress", "review", "done"],
-                    },
-                },
-                "required": ["card_id", "target_lane"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "archive_card",
-            "description": "Archive (soft-delete) a card from the board",
-            "parameters": {
-                "type": "object",
-                "properties": {"card_id": {"type": "string"}},
-                "required": ["card_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "unarchive_card",
-            "description": "Restore an archived card back to the board",
-            "parameters": {
-                "type": "object",
-                "properties": {"card_id": {"type": "string"}},
-                "required": ["card_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_card",
-            "description": "Permanently delete a card. The card MUST be archived first. Irreversible.",
-            "parameters": {
-                "type": "object",
-                "properties": {"card_id": {"type": "string"}},
-                "required": ["card_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_epic",
-            "description": "Create a new epic (a grouping label for cards). Use this when the user asks to create, add, or define an epic — do NOT create a card for this.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "The epic name"},
-                },
-                "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_epics",
-            "description": "List epic names on the board",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "include_archived": {"type": "boolean", "description": "Include archived epics. Default false."},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "set_card_epic",
-            "description": "Assign an epic to a card by its task number",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "card_number": {"type": "integer", "description": "Task number (e.g. 42 for Task#42)"},
-                    "epic": {"type": ["string", "null"], "description": "Epic name, or null for Unassigned"},
-                },
-                "required": ["card_number"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "archive_epic",
-            "description": "Archive an epic and all its active cards",
-            "parameters": {
-                "type": "object",
-                "properties": {"epic_name": {"type": "string"}},
-                "required": ["epic_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "unarchive_epic",
-            "description": "Restore an archived epic and its snapshotted cards",
-            "parameters": {
-                "type": "object",
-                "properties": {"epic_name": {"type": "string"}},
-                "required": ["epic_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_epic",
-            "description": "Get full details of an epic by name, including its description and comments",
-            "parameters": {
-                "type": "object",
-                "properties": {"epic_name": {"type": "string", "description": "The epic name"}},
-                "required": ["epic_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "link_cards",
-            "description": "Create a typed link between two cards. link_type: blocks, blocked_by, parent_of, child_of, duplicate, relates_to",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "from_number": {"type": "integer"},
-                    "to_number": {"type": "integer"},
-                    "link_type": {"type": "string", "enum": ["blocks", "blocked_by", "parent_of", "child_of", "duplicate", "relates_to"]},
-                },
-                "required": ["from_number", "to_number", "link_type"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "unlink_cards",
-            "description": "Remove a typed link between two cards (also removes inverse link)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "from_number": {"type": "integer"},
-                    "to_number": {"type": "integer"},
-                    "link_type": {"type": "string", "enum": ["blocks", "blocked_by", "parent_of", "child_of", "duplicate", "relates_to"]},
-                },
-                "required": ["from_number", "to_number", "link_type"],
             },
         },
     },
@@ -294,21 +59,6 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_health_model",
-            "description": (
-                "Return the full Kanban health model documentation as Markdown. "
-                "Covers all sections: A-series stat card signals (A1–A8) with exact thresholds, "
-                "chart threshold lines and badge rules (B), pie chart flags (C), "
-                "operational parameters (E), flow event definitions, and design principles. "
-                "Call this whenever you need precise thresholds, definitions, or rationale "
-                "beyond the brief summary in your system prompt."
-            ),
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "commit_resolution",
             "description": (
                 "Stage specific files and create a git commit recording the resolution "
@@ -330,7 +80,7 @@ _TOOLS = [
                         "description": (
                             "Conventional-commit subject line, e.g. "
                             "'feat: agent infers card defaults from context'. "
-                            "A 'Resolves #N \u2014 <title>' trailer is appended automatically."
+                            "A 'Resolves #N — <title>' trailer is appended automatically."
                         ),
                     },
                     "paths": {
@@ -338,40 +88,13 @@ _TOOLS = [
                         "items": {"type": "string"},
                         "description": (
                             "Repo-relative paths of every file you modified or created "
-                            "as part of this card's work, e.g. "
-                            "['src/kanbai/agent/chat.py', 'src/kanbai/board/storage/git_ops.py']. "
+                            "as part of this card's work. "
                             ".kanbai/ is always included automatically — do NOT list it here. "
-                            "If omitted, ALL uncommitted changes in the repo are staged, "
-                            "so always provide this list when other unrelated changes may "
-                            "be present in the working tree."
+                            "If omitted, ALL uncommitted changes in the repo are staged."
                         ),
                     },
                 },
                 "required": ["card_number", "message"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_board_summary",
-            "description": (
-                "Return aggregated analytics data for the board: card counts by lane and priority, "
-                "completion percentage, average age of OPEN cards (done/archived cards are excluded), top tags, "
-                "cumulative flow data for the last 90 days, and completion heatmap counts (cards moved to done) for the current year. "
-                "The result includes a '_metric_definitions' map explaining exactly what each metric means "
-                "\u2014 consult it before interpreting the numbers. "
-                "Use this to answer questions about board health, trends, throughput, or epic progress. "
-                "Optionally filter by epic name."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "epic": {
-                        "type": "string",
-                        "description": "Filter all data to this epic. Omit for board-wide summary.",
-                    }
-                },
             },
         },
     },
@@ -387,14 +110,8 @@ _TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Relative path to list (default: repo root).",
-                    },
-                    "depth": {
-                        "type": "integer",
-                        "description": "Max directory depth to recurse (default: 3).",
-                    },
+                    "path": {"type": "string", "description": "Relative path to list (default: repo root)."},
+                    "depth": {"type": "integer", "description": "Max directory depth to recurse (default: 3)."},
                 },
                 "required": [],
             },
@@ -412,20 +129,18 @@ _TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Repo-relative path to the file to read.",
-                    },
-                    "max_lines": {
-                        "type": "integer",
-                        "description": "Maximum number of lines to return (default: 200).",
-                    },
+                    "path": {"type": "string", "description": "Repo-relative path to the file to read."},
+                    "max_lines": {"type": "integer", "description": "Maximum number of lines to return (default: 200)."},
                 },
                 "required": ["path"],
             },
         },
     },
 ]
+
+# mode -> max MCP tier (ask/plan = read-only, agent = write, yolo = all including delete)
+_MODE_TIER = {"ask": "read", "plan": "read", "agent": "write", "yolo": "yolo"}
+_CHAT_ONLY_WRITE_TOOLS = {"commit_resolution"}
 
 def _build_base_prompt() -> str:
     """Build the base system prompt. Uses live settings so health thresholds
@@ -457,7 +172,7 @@ def _build_base_prompt() -> str:
         f"P3 \u2014 No backlog rot: complete or prune within {_s.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f} days.\n"
         "P4 \u2014 Stable requirements: archive and recreate if scope changes drastically.\n"
         "P5 \u2014 Spillover is normal: cards started before the 7-day window count toward throughput.\n"
-        "Health model: call get_health_model for all A/B/C/E signals and thresholds.\n"
+        "Health model: call health_model for all A/B/C/E signals and thresholds.\n"
         f"Key defaults \u2014 A1 Throughput bad < {_s.HEALTH_THROUGHPUT_BAD}; "
         f"A2 WIP bad > {_s.HEALTH_WIP_BAD}; "
         f"A5 Pull Rate bad < {_s.HEALTH_PULL_RATE_BAD}.\n\n"
@@ -519,18 +234,6 @@ action, then briefly confirm what you changed. Be concise and action-oriented.""
 
 _PROMPTS = {"ask": _ASK_PROMPT, "agent": _AGENT_PROMPT, "plan": _PLAN_PROMPT, "yolo": _YOLO_PROMPT}
 
-# Tools that only read state — available in every mode.
-_READ_TOOL_NAMES = {"list_cards", "get_card", "get_card_by_number", "list_epics", "get_epic", "convert_timestamps_to_local", "get_board_summary", "get_health_model", "list_files", "read_file"}
-
-_WRITE_TOOL_NAMES = {
-    "create_card", "update_card", "move_card", "archive_card",
-    "unarchive_card", "set_card_epic",
-    "create_epic", "archive_epic", "unarchive_epic", "link_cards", "unlink_cards",
-    "commit_resolution",
-}
-
-_YOLO_TOOL_NAMES = {"delete_card"}
-
 # Approximate context window (tokens). Override with KANBAI_CONTEXT_WINDOW.
 _CONTEXT_WINDOW = int(os.environ.get("KANBAI_CONTEXT_WINDOW", "128000"))
 
@@ -539,13 +242,16 @@ _AZURE_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-prev
 
 
 def _tools_for_mode(mode: str) -> list[dict]:
-    """Return the tool list for a given mode."""
-    if mode == "yolo":
-        return _TOOLS  # all tools including delete_card
-    if mode == "agent":
-        allowed = _READ_TOOL_NAMES | _WRITE_TOOL_NAMES
-        return [t for t in _TOOLS if t["function"]["name"] in allowed]
-    return [t for t in _TOOLS if t["function"]["name"] in _READ_TOOL_NAMES]
+    """Return the OpenAI tool list for the given mode.
+
+    Board tools come from the MCP registry — automatically includes every
+    @tool-decorated function in server.py, filtered by the mode's tier:
+      ask / plan -> read-only
+      agent      -> read + write
+      yolo       -> read + write + delete (full access)
+    Chat-only tools (commit_resolution, list_files, etc.) are appended.
+    """
+    return get_openai_tools(_MODE_TIER.get(mode, "write")) + _CHAT_ONLY_TOOLS
 
 
 def _resolve_deployment(model: ModelDef) -> str:
@@ -561,29 +267,11 @@ def _resolve_deployment(model: ModelDef) -> str:
 
 
 def _dispatch_tool(name: str, args: dict) -> str:
-    if name == "create_card":
-        card = operations.create_card(**args)
-        return json.dumps({"id": card.id, "number": card.number, "title": card.title, "lane": card.lane, "epic": card.epic})
+    # Board tools: single source of truth in the MCP registry.
+    if name in _TOOL_REGISTRY:
+        return call_tool_sync(name, args)
 
-    if name == "list_cards":
-        op_args = dict(args)
-        if "epic" in op_args:
-            raw = op_args.pop("epic")
-            epic_val = None if raw in (None, "", "Unassigned") else raw
-            return json.dumps(operations.list_cards(**op_args, epic=epic_val))
-        return json.dumps(operations.list_cards(**op_args))
-
-    if name == "get_card":
-        card = operations.get_card(args["card_id"])
-        if not card:
-            return json.dumps({"error": "not_found"})
-        return json.dumps({
-            "id": card.id, "number": card.number, "title": card.title, "lane": card.lane,
-            "description": card.description, "priority": card.priority,
-            "tags": card.tags, "archived": card.archived, "epic": card.epic,
-            "links": card.links,
-        })
-
+    # Chat-only tools ────────────────────────────────────────────────────────
     if name == "get_card_by_number":
         from kanbai.board.storage import sqlite_cache as _sc
         row = _sc.get_card_by_number(args["number"])
@@ -592,71 +280,16 @@ def _dispatch_tool(name: str, args: dict) -> str:
         card = operations.get_card(row["id"])
         if not card:
             return json.dumps({"error": "not_found"})
+        checklist = card.checklist or []
+        done = sum(1 for it in checklist if it.get("done"))
         return json.dumps({
             "id": card.id, "number": card.number, "title": card.title, "lane": card.lane,
             "description": card.description, "priority": card.priority,
             "tags": card.tags, "archived": card.archived, "epic": card.epic,
-            "links": card.links,
+            "links": card.links, "comments": card.comments,
+            "checklist": [{"index": i, "text": it["text"], "done": it.get("done", False)} for i, it in enumerate(checklist)],
+            "checklist_completion": f"{done}/{len(checklist)}",
         })
-
-    if name == "update_card":
-        card = operations.update_card(**args)
-        return json.dumps({"updated": bool(card)})
-
-    if name == "move_card":
-        card = operations.move_card(args["card_id"], args["target_lane"])
-        return json.dumps({"moved": bool(card), "lane": card.lane if card else None})
-
-    if name == "archive_card":
-        card = operations.archive_card(args["card_id"])
-        return json.dumps({"archived": bool(card)})
-
-    if name == "unarchive_card":
-        card = operations.unarchive_card(args["card_id"])
-        return json.dumps({"unarchived": bool(card)})
-
-    if name == "delete_card":
-        ok = operations.delete_card(args["card_id"])
-        return json.dumps({"deleted": ok, "error": None if ok else "not_found_or_not_archived"})
-
-    if name == "create_epic":
-        already_exists = _epics.epic_exists(args["name"])
-        _epics.create_epic(args["name"])
-        return json.dumps({"created": not already_exists, "already_exists": already_exists, "name": args["name"]})
-
-    if name == "list_epics":
-        include_archived = args.get("include_archived", False)
-        return json.dumps(_epics.list_epics(include_archived=include_archived))
-
-    if name == "set_card_epic":
-        from kanbai.board.storage import sqlite_cache as _sc
-        row = _sc.get_card_by_number(args["card_number"])
-        if not row:
-            return json.dumps({"error": f"Card #{args['card_number']} not found"})
-        card = operations.update_card(row["id"], epic=args.get("epic", _UNSET))
-        return json.dumps({"updated": bool(card)})
-
-    if name == "archive_epic":
-        count = operations.archive_epic_op(args["epic_name"])
-        return json.dumps({"archived_cards": count})
-
-    if name == "unarchive_epic":
-        count = operations.unarchive_epic_op(args["epic_name"])
-        return json.dumps({"restored_cards": count})
-
-    if name == "get_epic":
-        detail = _epics.get_epic_detail(args["epic_name"])
-        if detail is None:
-            return json.dumps({"error": "not_found", "epic_name": args["epic_name"]})
-        return json.dumps(detail)
-
-    if name == "link_cards":
-        err = operations.link_cards(args["from_number"], args["to_number"], args["link_type"])
-        return json.dumps({"ok": err is None, "error": err})
-
-    if name == "unlink_cards":
-        err = operations.unlink_cards(args["from_number"], args["to_number"], args["link_type"])
-        return json.dumps({"ok": err is None, "error": err})
 
     if name == "convert_timestamps_to_local":
         now_local = datetime.now(timezone.utc).astimezone()
@@ -691,50 +324,23 @@ def _dispatch_tool(name: str, args: dict) -> str:
         )
         return json.dumps({"ok": ok, "info": info})
 
-    if name == "get_health_model":
-        from kanbai.board.health_doc import health_model_doc
-        return health_model_doc()
-
-    if name == "get_board_summary":
-        from kanbai.board.storage import sqlite_cache as _sc
-        import datetime as _dt
-        epic = args.get("epic") or None
-        by_lane = _sc.count_cards_by_lane(epic=epic)
-        by_priority = _sc.count_cards_by_priority(epic=epic)
-        total = sum(by_lane.values())
-        done = by_lane.get("done", 0)
-        return json.dumps({
-            "by_lane": by_lane,
-            "by_priority": by_priority,
-            "total": total,
-            "done": done,
-            "completion_pct": round(done / total * 100) if total else 0,
-            "avg_age_days": _sc.avg_card_age_days(epic=epic),
-            "top_tags": _sc.count_cards_by_tag(10, epic=epic),
-            "cfd_last_90_days": _sc.cfd_data(90, epic=epic),
-            "completion_heatmap_this_year": _sc.done_cards_heatmap(_dt.date.today().year, epic=epic),
-            "_metric_definitions": _sc.METRIC_DEFINITIONS,
-        })
-
     if name == "list_files":
         from kanbai.paths import PROJECT_ROOT
         from kanbai.agent.gitignore import GitignoreFilter
-        import os
+        import os as _os
         gi_filter = GitignoreFilter(PROJECT_ROOT)
         root = PROJECT_ROOT
         rel = args.get("path", "")
         if rel:
             target = (PROJECT_ROOT / rel).resolve()
-            # Reject if the requested sub-path itself is gitignored
             if gi_filter.is_ignored(target):
                 return json.dumps({"error": "access_denied", "path": rel,
                                    "reason": "path is gitignored or outside the repo"})
             root = target
         max_depth = int(args.get("depth", 3))
         lines: list[str] = []
-        for dirpath, dirnames, filenames in os.walk(root):
+        for dirpath, dirnames, filenames in _os.walk(root):
             cur_dir = Path(dirpath)
-            # skip hidden dirs, common noise, and gitignored dirs
             dirnames[:] = sorted(
                 d for d in dirnames
                 if not d.startswith(".")
@@ -756,7 +362,6 @@ def _dispatch_tool(name: str, args: dict) -> str:
         from kanbai.agent.gitignore import GitignoreFilter
         gi_filter = GitignoreFilter(PROJECT_ROOT)
         path = (PROJECT_ROOT / args["path"]).resolve()
-        # Block access to gitignored or out-of-repo paths
         if gi_filter.is_ignored(path):
             return json.dumps({"error": "access_denied", "path": args["path"],
                                "reason": "file is gitignored or outside the repo"})
@@ -776,7 +381,6 @@ def _dispatch_tool(name: str, args: dict) -> str:
             return json.dumps({"error": str(exc), "path": args["path"]})
 
     return json.dumps({"error": "unknown_tool", "name": name})
-
 
 _client_cache: AzureOpenAI | None = None
 _client_cache_key: tuple[str, str, str] | None = None
@@ -988,7 +592,8 @@ def chat(
         for tc in tool_calls_list:
             name = tc["function"]["name"]
             args = json.loads(tc["function"]["arguments"])
-            if name in _WRITE_TOOL_NAMES | _YOLO_TOOL_NAMES:
+            reg = _TOOL_REGISTRY.get(name)
+            if (reg and _TIER_RANK[reg["tier"]] >= _TIER_RANK["write"]) or name in _CHAT_ONLY_WRITE_TOOLS:
                 board_changed = True
             if on_tool_call:
                 try:

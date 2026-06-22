@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 from pathlib import Path
 from typing import Callable
 
 from fastmcp import FastMCP
+from fastmcp.tools.function_tool import FunctionTool
 
 from kanbai.board import epics as _epics
 from kanbai.board import operations
@@ -50,26 +52,78 @@ mcp = FastMCP(
 )
 
 # --- Access tiers -----------------------------------------------------------
-# KANBAI_MCP_ACCESS controls which tools external agents may call:
+# KANBAI_MCP_ACCESS controls which tools external MCP clients may call:
 #   read  -> read-only tools only (list/get/summary)
 #   write -> read + create/update/move/archive/link/epics (default)
 #   yolo  -> write + permanent deletion (delete_card)
-# Tools above the configured tier are never registered, so a jailbroken prompt
-# cannot reach them — they simply aren't offered to the client.
+# Tools above the configured tier are never registered with the mcp transport,
+# so a jailbroken prompt cannot reach them from external clients.
+#
+# Kanbot (the in-process chat agent) bypasses this and calls tools directly
+# via call_tool_sync() with its own mode-based tier filtering.
 _TIER_RANK = {"read": 0, "write": 1, "yolo": 2}
 
 _ACCESS = os.environ.get("KANBAI_MCP_ACCESS", "write").strip().lower()
 if _ACCESS not in _TIER_RANK:
     _ACCESS = "write"
 
+# Registry of every tool: name -> {tier, fn, schema}
+# Populated by the @tool decorator regardless of _ACCESS, so Kanbot can
+# always reach all tools when its mode permits it.
+_TOOL_REGISTRY: dict[str, dict] = {}
+
 
 def tool(tier: str = "read"):
-    """Register an MCP tool only if the configured access tier permits it."""
+    """Register a tool with an access tier.
+
+    External MCP transport: only tools with tier <= _ACCESS are registered.
+    Kanbot chat agent: uses _TOOL_REGISTRY directly and filters by its mode.
+    """
     def decorator(fn):
+        ft = FunctionTool.from_function(fn)
+        _TOOL_REGISTRY[fn.__name__] = {
+            "tier": tier,
+            "fn": fn,
+            "schema": {
+                "name": ft.name,
+                "description": ft.description or "",
+                "parameters": ft.parameters,
+            },
+        }
         if _TIER_RANK[tier] <= _TIER_RANK[_ACCESS]:
             return mcp.tool()(fn)
-        return fn  # not registered for this access tier
+        return fn
     return decorator
+
+
+def get_openai_tools(max_tier: str = "write") -> list[dict]:
+    """Return OpenAI-format tool definitions for all tools up to *max_tier*.
+
+    Used by the Kanbot chat agent to build its tool list based on the current
+    mode (ask/plan -> read, agent -> write, yolo -> yolo).
+    """
+    rank = _TIER_RANK.get(max_tier, 1)
+    return [
+        {"type": "function", "function": info["schema"]}
+        for info in _TOOL_REGISTRY.values()
+        if _TIER_RANK[info["tier"]] <= rank
+    ]
+
+
+def call_tool_sync(name: str, args: dict) -> str:
+    """Call a registered board tool by name and return a JSON string.
+
+    Called directly by the Kanbot chat agent -- no MCP transport involved.
+    Returns a JSON error string if the tool name is not found.
+    """
+    info = _TOOL_REGISTRY.get(name)
+    if info is None:
+        return json.dumps({"error": f"unknown tool: {name}"})
+    try:
+        result = info["fn"](**args)
+        return result if isinstance(result, str) else json.dumps(result)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
 
 
 @tool("write")
