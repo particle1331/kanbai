@@ -49,6 +49,7 @@ class Card:
     position: float = 0.0
     due_date: str | None = None
     checklist: list[dict] = field(default_factory=list)
+    file_refs: list[str] = field(default_factory=list)
 
     def to_frontmatter(self) -> dict:
         return {
@@ -69,6 +70,7 @@ class Card:
             "position": self.position,
             "due_date": self.due_date,
             "checklist": self.checklist,
+            "file_refs": self.file_refs,
         }
 
     @classmethod
@@ -92,4 +94,5 @@ class Card:
             position=float(meta.get("position") or 0.0),
             due_date=meta.get("due_date") or None,
             checklist=list(meta.get("checklist") or []),
+            file_refs=list(meta.get("file_refs") or []),
         )

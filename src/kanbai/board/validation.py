@@ -23,9 +23,12 @@ MAX_COMMENT_LEN = 4_000
 MAX_EPIC_LEN    = 100
 MAX_CARDS_PER_EPIC = 500  # active cards per epic (Unassigned counts as one bucket)
 MAX_ATTACHMENTS = 20
-MAX_ATTACHMENT_SIZE_MB = 100
+MAX_ATTACHMENT_SIZE_MB = 25
+MAX_TOTAL_ATTACHMENTS_MB = 500
 MAX_CHECKLIST_ITEMS = 100
 MAX_CHECKLIST_TEXT = 500
+MAX_FILE_REFS = 50
+MAX_FILE_REF_LEN = 300
 VALID_COMMENT_ROLES = frozenset(["note", "instruction", "update", "decision", "blocker", "question"])
 BLOCKED_EXTENSIONS = {
     ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".wsf",
@@ -39,6 +42,8 @@ BLOCKED_EXTENSIONS = {
 WARN_DESCRIPTION = 5_000
 WARN_TAGS        = 4
 WARN_LINKS       = 10
+WARN_ATTACHMENT_SIZE_MB   = 5    # per-file soft hint: suggest file ref instead
+WARN_TOTAL_ATTACHMENTS_MB = 400  # board-wide: health signal goes watch
 
 
 # ── Validators ────────────────────────────────────────────────────────────────
@@ -180,6 +185,33 @@ def validate_attachment(src_path: str, current_count: int) -> None:
     if ext in BLOCKED_EXTENSIONS:
         raise ValueError(
             f"File type '{ext}' is not allowed for security reasons."
+        )
+
+
+def validate_file_ref(path: str, current_count: int) -> None:
+    """Raise ``ValueError`` if the file reference path is invalid or limits are exceeded."""
+    import re
+    p = (path or "").strip()
+    if not p:
+        raise ValueError("file_ref: path must not be empty.")
+    if len(p) > MAX_FILE_REF_LEN:
+        raise ValueError(
+            f"file_ref: path too long ({len(p)} chars, max {MAX_FILE_REF_LEN})."
+        )
+    if current_count >= MAX_FILE_REFS:
+        raise ValueError(
+            f"file_refs: maximum {MAX_FILE_REFS} references per card."
+        )
+    if p.startswith("/"):
+        raise ValueError("file_ref: must be a relative path (no leading '/').")
+    # Reject '..' in the file-path component (before any ':line' suffix).
+    file_part = p.split(":")[0]
+    if ".." in file_part.split("/"):
+        raise ValueError("file_ref: '..' path components are not allowed.")
+    # Valid formats: 'path/to/file', 'path/to/file:42', 'path/to/file:10-30'
+    if not re.match(r'^[^:]+(?::\d+(?:-\d+)?)?$', p):
+        raise ValueError(
+            "file_ref: invalid format. Use 'path/to/file' or 'path/to/file:10-30'."
         )
 
 

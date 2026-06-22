@@ -59,7 +59,8 @@ def init_db() -> None:
                 links TEXT DEFAULT '[]',
                 assigned_to TEXT DEFAULT '',
                 position REAL DEFAULT 0,
-                due_date TEXT DEFAULT NULL
+                due_date TEXT DEFAULT NULL,
+                file_refs TEXT DEFAULT '[]'
             )
         """)
         # Migrate existing DB: add columns if missing
@@ -71,6 +72,7 @@ def init_db() -> None:
             ("assigned_to", "ALTER TABLE cards ADD COLUMN assigned_to TEXT DEFAULT ''"),
             ("position", "ALTER TABLE cards ADD COLUMN position REAL DEFAULT 0"),
             ("due_date", "ALTER TABLE cards ADD COLUMN due_date TEXT DEFAULT NULL"),
+            ("file_refs", "ALTER TABLE cards ADD COLUMN file_refs TEXT DEFAULT '[]'"),
         ]:
             if col not in existing:
                 con.execute(ddl)
@@ -98,8 +100,8 @@ def upsert_card(card: Card) -> None:
             """
             INSERT INTO cards
                 (id, title, lane, priority, tags, created_at, updated_at,
-                 archived, description, attachments, epic, number, links, assigned_to, position, due_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 archived, description, attachments, epic, number, links, assigned_to, position, due_date, file_refs)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title       = excluded.title,
                 lane        = excluded.lane,
@@ -115,7 +117,8 @@ def upsert_card(card: Card) -> None:
                 links       = excluded.links,
                 assigned_to = excluded.assigned_to,
                 position    = excluded.position,
-                due_date    = excluded.due_date
+                due_date    = excluded.due_date,
+                file_refs   = excluded.file_refs
             """,
             (
                 card.id,
@@ -134,6 +137,7 @@ def upsert_card(card: Card) -> None:
                 ",".join(card.assigned_to),
                 card.position,
                 card.due_date,
+                json.dumps(card.file_refs),
             ),
         )
         con.commit()

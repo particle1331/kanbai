@@ -112,6 +112,11 @@ def run_app(port: int = 8765) -> None:
             _health_header_badge = ft.Container(visible=False)
             _git_state: dict = {"is_repo": None, "syncing": False}
             _git_badge = ft.Container(visible=False)
+            _settings_storage_dot = ft.Container(
+                width=8, height=8, border_radius=4,
+                visible=False, right=0, top=2,
+                bgcolor="#F85149",
+            )
 
             def _refresh_health_badge() -> None:
                 from kanbai.board.health import project_health
@@ -192,6 +197,26 @@ def run_app(port: int = 8765) -> None:
                         page.update(_git_badge)
                     except Exception:
                         pass
+                except Exception:
+                    pass
+
+            def _refresh_storage_dot() -> None:
+                from kanbai.board import operations as _ops
+                from kanbai.board import validation as _val
+                try:
+                    total_mb = _ops.get_attachments_total_size_bytes() / (1024 * 1024)
+                    full = total_mb >= _val.MAX_TOTAL_ATTACHMENTS_MB
+                    _settings_storage_dot.visible = full
+                    _settings_storage_dot.tooltip = ft.Tooltip(
+                        message=(
+                            f"Attachment storage full ({total_mb:.1f}\u00a0MB\u00a0/"
+                            f"\u00a0{_val.MAX_TOTAL_ATTACHMENTS_MB}\u00a0MB)"
+                            f" \u2014 open Settings to clean up"
+                        ),
+                        prefer_below=True,
+                        wait_duration=300,
+                    ) if full else None
+                    page.update(_settings_storage_dot)
                 except Exception:
                     pass
 
@@ -372,6 +397,7 @@ def run_app(port: int = 8765) -> None:
                 if graph_pg:
                     graph_pg.refresh_epics()
                 _refresh_health_badge()
+                _refresh_storage_dot()
                 _refresh_git_status()
 
             # Register the board-refresh hook so in-process MCP mutations
@@ -439,7 +465,14 @@ def run_app(port: int = 8765) -> None:
             )
 
             settings_button = ft.Container(
-                content=ft.Icon(ft.Icons.SETTINGS_OUTLINED, size=24, color="#8B949E"),
+                content=ft.Stack(
+                    [
+                        ft.Icon(ft.Icons.SETTINGS_OUTLINED, size=24, color="#8B949E"),
+                        _settings_storage_dot,
+                    ],
+                    width=28,
+                    height=28,
+                ),
                 padding=ft.Padding(0, 12, 0, 16),
                 on_click=on_open_settings,
                 ink=True,
@@ -545,6 +578,7 @@ def run_app(port: int = 8765) -> None:
                 )
             )
             _refresh_health_badge()
+            _refresh_storage_dot()
             _refresh_git_status()
             _start_git_poll()
 

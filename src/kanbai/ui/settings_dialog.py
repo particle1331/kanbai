@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
 
 import flet as ft
 
@@ -239,6 +240,127 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
+    # ------------------------------------------------------------------ Storage
+    from kanbai.board import operations as _ops
+    from kanbai.board import validation as _val
+
+    _att_max_mb = _val.MAX_TOTAL_ATTACHMENTS_MB
+    _att_warn_mb = _val.WARN_TOTAL_ATTACHMENTS_MB
+
+    def _storage_bar_color(mb: float) -> str:
+        if mb >= _att_max_mb:
+            return "#F85149"
+        if mb >= _att_warn_mb:
+            return "#F0A742"
+        return "#56D364"
+
+    _att_mb = _ops.get_attachments_total_size_bytes() / (1024 * 1024)
+
+    _storage_label = ft.Text(
+        f"{_att_mb:.1f} MB / {_att_max_mb} MB used for attachments",
+        size=11, color=_TEXT_SECONDARY,
+    )
+    _storage_bar = ft.ProgressBar(
+        value=min(_att_mb / _att_max_mb, 1.0) if _att_max_mb else 0,
+        bgcolor="#30363D",
+        color=_storage_bar_color(_att_mb),
+        height=4,
+        border_radius=2,
+    )
+    _cleanup_result = ft.Text("", size=11, color=_TEXT_SECONDARY)
+
+    def _make_pill(label: str, color: str, bgcolor: str | None = None,
+                   border_color: str = _BORDER) -> ft.Container:
+        return ft.Container(
+            content=ft.Text(label, size=11, weight=ft.FontWeight.W_500, color=color),
+            height=28,
+            padding=ft.Padding(10, 0, 10, 0),
+            alignment=ft.Alignment.CENTER,
+            border_radius=6,
+            bgcolor=bgcolor,
+            border=ft.Border(
+                ft.BorderSide(1, border_color), ft.BorderSide(1, border_color),
+                ft.BorderSide(1, border_color), ft.BorderSide(1, border_color),
+            ),
+            ink=True,
+        )
+
+    _cleanup_dryrun_pill = _make_pill("Dry run", _TEXT_SECONDARY)
+    _cleanup_run_pill    = _make_pill("Run cleanup", "#F85149", bgcolor="#2A0A08",
+                                      border_color="#5A2020")
+    _cleanup_run_pill.visible = False
+
+    def _on_dry_run(_e) -> None:
+        _cleanup_dryrun_pill.ink = False
+        _cleanup_dryrun_pill.content.color = "#4A5568"
+        _cleanup_result.value = "Scanning…"
+        _cleanup_result.color = _TEXT_SECONDARY
+        _cleanup_run_pill.visible = False
+        page.update()
+
+        def _do() -> None:
+            result = _ops.cleanup_attachments(dry_run=True)
+            if result["files"] == 0:
+                _cleanup_result.value = "Nothing to clean up."
+                _cleanup_run_pill.visible = False
+            else:
+                _cleanup_result.value = (
+                    f"{result['files']} file(s) \u00b7 {result['size_mb']} MB "
+                    f"across {result['eligible_cards']} done card(s) >90d"
+                )
+                _cleanup_run_pill.visible = True
+            _cleanup_dryrun_pill.ink = True
+            _cleanup_dryrun_pill.content.color = _TEXT_SECONDARY
+            page.update()
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_run_cleanup(_e) -> None:
+        _cleanup_run_pill.ink = False
+        _cleanup_run_pill.content.color = "#7A3030"
+        _cleanup_result.value = "Cleaning up…"
+        _cleanup_result.color = _TEXT_SECONDARY
+        page.update()
+
+        def _do() -> None:
+            result = _ops.cleanup_attachments(dry_run=False)
+            _cleanup_run_pill.visible = False
+            _cleanup_run_pill.ink = True
+            _cleanup_run_pill.content.color = "#F85149"
+            _cleanup_result.value = (
+                f"✓ Freed {result['size_mb']} MB \u00b7 {result['files']} file(s) removed"
+            )
+            _cleanup_result.color = "#56D364"
+            new_mb = _ops.get_attachments_total_size_bytes() / (1024 * 1024)
+            _storage_label.value = f"{new_mb:.1f} MB / {_att_max_mb} MB used"
+            _storage_bar.value = min(new_mb / _att_max_mb, 1.0) if _att_max_mb else 0
+            _storage_bar.color = _storage_bar_color(new_mb)
+            page.update()
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    _cleanup_dryrun_pill.on_click = _on_dry_run
+    _cleanup_run_pill.on_click   = _on_run_cleanup
+
+    storage_section = ft.Column(
+        [
+            ft.Row(
+                [
+                    _storage_label,
+                    ft.Container(expand=True),
+                    _cleanup_dryrun_pill,
+                    _cleanup_run_pill,
+                ],
+                spacing=6,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            ft.Container(content=_storage_bar, padding=ft.Padding(0, 2, 0, 0)),
+            _cleanup_result,
+        ],
+        spacing=4,
+        tight=True,
+    )
+
     # ------------------------------------------------------------------ Dialog
     def _close(_e) -> None:
         dlg.open = False
@@ -265,16 +387,15 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
                     steps_row,
                     stream_row,
                     ft.Divider(height=16, color="#30363D"),
-                    ft.Text("Usage", size=11, color=_TEXT_SECONDARY, weight=ft.FontWeight.W_600),
-                    usage_header_row,
-                    usage_column,
+                    ft.Text("Storage", size=11, color=_TEXT_SECONDARY, weight=ft.FontWeight.W_600),
+                    storage_section,
                 ],
                 spacing=10,
                 tight=True,
                 scroll=ft.ScrollMode.AUTO,
             ),
-            width=380,
-            height=440,
+            width=400,
+            height=480,
             padding=ft.Padding(0, 8, 0, 0),
         ),
         actions=[ft.TextButton("Close", on_click=_close)],

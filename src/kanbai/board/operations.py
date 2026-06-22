@@ -494,6 +494,19 @@ def get_attachment_path(card_id: str, filename: str) -> Path:
     return get_attachment_dir(card_id) / filename
 
 
+def get_attachments_total_size_bytes() -> int:
+    """Return the total size in bytes of every file under the attachments directory."""
+    total = 0
+    if ATTACHMENTS_DIR.exists():
+        for p in ATTACHMENTS_DIR.rglob("*"):
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    pass
+    return total
+
+
 def add_attachment(card_id: str, src_path: str) -> str | None:
     """Copy *src_path* into the card's attachment directory.
 
@@ -508,6 +521,16 @@ def add_attachment(card_id: str, src_path: str) -> str | None:
         return str(ex)
 
     src = Path(src_path)
+    new_bytes = src.stat().st_size
+    used_bytes = get_attachments_total_size_bytes()
+    if (used_bytes + new_bytes) / (1024 * 1024) > _validation.MAX_TOTAL_ATTACHMENTS_MB:
+        used_mb = used_bytes / (1024 * 1024)
+        return (
+            f"Board-wide attachment storage limit reached "
+            f"({used_mb:.1f} MB / {_validation.MAX_TOTAL_ATTACHMENTS_MB} MB used). "
+            f"Run Cleanup in Settings to free space from done cards."
+        )
+
     filename = _sanitize_filename(src.name)
 
     att_dir = get_attachment_dir(card_id)
@@ -558,8 +581,17 @@ def add_attachment_bytes(card_id: str, filename: str, data: bytes) -> str | None
     size_mb = len(data) / (1024 * 1024)
     if size_mb > _validation.MAX_ATTACHMENT_SIZE_MB:
         return (
-            f"File is too large ({size_mb:.1f} MB). "
-            f"Maximum is {_validation.MAX_ATTACHMENT_SIZE_MB} MB."
+            f"File is too large ({size_mb:.1f} MB). "
+            f"Maximum is {_validation.MAX_ATTACHMENT_SIZE_MB} MB."
+        )
+
+    used_bytes = get_attachments_total_size_bytes()
+    if (used_bytes + len(data)) / (1024 * 1024) > _validation.MAX_TOTAL_ATTACHMENTS_MB:
+        used_mb = used_bytes / (1024 * 1024)
+        return (
+            f"Board-wide attachment storage limit reached "
+            f"({used_mb:.1f} MB / {_validation.MAX_TOTAL_ATTACHMENTS_MB} MB used). "
+            f"Run Cleanup in Settings to free space from done cards."
         )
 
     safe_name = _sanitize_filename(filename)
@@ -606,6 +638,118 @@ def remove_attachment(card_id: str, filename: str) -> str | None:
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
     return None
+
+
+# ── File references ───────────────────────────────────────────────────────────
+
+def add_file_ref(card_id: str, path: str) -> str | None:
+    """Append a file reference to a card.
+
+    *path* is a relative file path with an optional line range suffix:
+    ``"src/foo.py"`` or ``"src/foo.py:10-30"``.  Returns an error string on
+    failure, or ``None`` on success.
+    """
+    card = markdown_store.read_card(card_id)
+    if not card:
+        return "Card not found."
+    path = (path or "").strip()
+    try:
+        _validation.validate_file_ref(path, len(card.file_refs))
+    except ValueError as ex:
+        return str(ex)
+    # Avoid exact duplicates.
+    if path in card.file_refs:
+        return None  # idempotent — not an error
+    card.file_refs.append(path)
+    card.updated_at = _now()
+    markdown_store.write_card(card)
+    sqlite_cache.upsert_card(card)
+    return None
+
+
+def remove_file_ref(card_id: str, path: str) -> str | None:
+    """Remove a file reference from a card by its exact path string.
+
+    Returns an error string on failure, or ``None`` on success.
+    """
+    card = markdown_store.read_card(card_id)
+    if not card:
+        return "Card not found."
+    if path not in card.file_refs:
+        return f"File reference '{path}' not found on card."
+    card.file_refs = [r for r in card.file_refs if r != path]
+    card.updated_at = _now()
+    markdown_store.write_card(card)
+    sqlite_cache.upsert_card(card)
+    return None
+
+
+def cleanup_attachments(dry_run: bool = True, days: int = 90) -> dict:
+    """Find (and optionally remove) attachments from done cards idle for *days* days.
+
+    A card is eligible when it is currently in the ``done`` lane (non-archived)
+    and its ``updated_at`` timestamp predates the cutoff (now − *days*).
+
+    Parameters
+    ----------
+    dry_run:
+        When ``True`` (default) nothing is deleted; the return value describes
+        what *would* be removed.  Pass ``False`` to actually delete the files
+        and update card metadata.
+    days:
+        Number of days of inactivity after which a done card's attachments are
+        eligible.  Defaults to 90.
+
+    Returns a dict with keys:
+      dry_run         – mirrors the argument
+      eligible_cards  – number of done cards that have eligible attachments
+      files           – total number of attachment files eligible
+      size_mb         – combined size in MB (rounded to 2 d.p.)
+      cards           – per-card detail list (id, number, title, updated_at, files)
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = sqlite_cache.query_cards(lane="done", archived=False)
+    eligible: list[dict] = []
+    total_files = 0
+    total_bytes = 0
+    for row in rows:
+        updated = row.get("updated_at") or ""
+        if not updated or updated >= cutoff:
+            continue
+        card = markdown_store.read_card(row["id"])
+        if not card or not card.attachments:
+            continue
+        card_files = []
+        for fname in list(card.attachments):
+            att_path = get_attachment_path(card.id, fname)
+            if att_path.exists():
+                try:
+                    size = att_path.stat().st_size
+                except OSError:
+                    size = 0
+                card_files.append({"filename": fname, "size_bytes": size})
+                total_files += 1
+                total_bytes += size
+        if card_files:
+            eligible.append({
+                "card_id": card.id,
+                "card_number": card.number,
+                "title": card.title,
+                "updated_at": card.updated_at,
+                "files": card_files,
+            })
+    if not dry_run:
+        for card_info in eligible:
+            for file_info in card_info["files"]:
+                remove_attachment(card_info["card_id"], file_info["filename"])
+    return {
+        "dry_run": dry_run,
+        "eligible_cards": len(eligible),
+        "files": total_files,
+        "size_mb": round(total_bytes / (1024 * 1024), 2),
+        "cards": eligible,
+    }
 
 
 # ── Relationship graph ────────────────────────────────────────────────────────
