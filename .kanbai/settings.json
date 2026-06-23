@@ -1,4 +1,5 @@
 {
+  "project_root": "/Users/particle1331/code/latest/kanbai",
   "use_local_tz": true,
   "reasoning_effort": "none",
   "max_completion_tokens": 2048,
@@ -7,8 +8,8 @@
   "max_agent_steps": 8,
   "token_usage": {
     "nano": {
-      "prompt_tokens": 402797,
-      "completion_tokens": 5467
+      "prompt_tokens": 410228,
+      "completion_tokens": 5666
     },
     "mini": {
       "prompt_tokens": 17242,
