@@ -102,7 +102,7 @@ def run_app(port: int = 8765) -> None:
                 _health_dot_health_unsel, _health_dot_health_sel,
             )
 
-            def _health_icon_stack(base_icon: str, dot: ft.Container) -> ft.Stack:
+            def _health_icon_stack(base_icon, dot: ft.Container) -> ft.Stack:
                 return ft.Stack(
                     [ft.Icon(base_icon, size=24), dot],
                     width=28,
@@ -312,6 +312,7 @@ def run_app(port: int = 8765) -> None:
 
             # Lazy-loaded pages — only imported/built on first navigation
             table_pg = None
+            activity_pg = None
             health_pg = None
             graph_pg = None
 
@@ -321,6 +322,13 @@ def run_app(port: int = 8765) -> None:
                     from kanbai.ui.table_page import TablePage
                     table_pg = TablePage(page, on_open_card)
                 return table_pg
+
+            def _get_activity_pg():
+                nonlocal activity_pg
+                if activity_pg is None:
+                    from kanbai.ui.activity_page import ActivityPage
+                    activity_pg = ActivityPage(page, on_open_card=on_open_card)
+                return activity_pg
 
             def _get_health_pg():
                 nonlocal health_pg
@@ -363,7 +371,9 @@ def run_app(port: int = 8765) -> None:
                 """Lazily build and cache a page view."""
                 if key in _views_cache:
                     return _views_cache[key]
-                if key == "health":
+                if key == "activity":
+                    v = _get_activity_pg().build()
+                elif key == "health":
                     v = _get_health_pg().build()
                 elif key == "graph":
                     v = _get_graph_pg().build()
@@ -382,6 +392,8 @@ def run_app(port: int = 8765) -> None:
             def _select_epic_for(key: str, epic) -> None:
                 if key == "board":
                     kanban.select_epic(epic)
+                elif key == "activity" and activity_pg:
+                    activity_pg.refresh()
                 elif key == "health" and health_pg:
                     health_pg.select_epic(epic)
                 elif key == "graph" and graph_pg:
@@ -392,6 +404,8 @@ def run_app(port: int = 8765) -> None:
             def on_board_change() -> None:
                 kanban.refresh_board()
                 kanban.refresh_epics()
+                if activity_pg:
+                    activity_pg.refresh()
                 if table_pg:
                     table_pg.refresh()
                 if graph_pg:
@@ -455,12 +469,28 @@ def run_app(port: int = 8765) -> None:
                 )
                 page.show_dialog(dlg)
 
+            def _open_activity_view(_e) -> None:
+                _show_view("activity")
+                sidebar.selected_index = NAV_INDEX["activity"]
+                if activity_pg:
+                    activity_pg.refresh()
+                page.update()
+
             health_doc_button = ft.Container(
                 content=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=24, color="#8B949E"),
                 padding=ft.Padding(0, 12, 0, 4),
                 on_click=_on_open_health_doc,
                 ink=True,
                 tooltip="Kanban Principles & Health Model",
+                alignment=ft.Alignment.CENTER,
+            )
+
+            activity_button = ft.Container(
+                content=ft.Icon(ft.Icons.HISTORY_OUTLINED, size=24, color="#8B949E"),
+                padding=ft.Padding(0, 8, 0, 4),
+                on_click=_open_activity_view,
+                ink=True,
+                tooltip="Activity log",
                 alignment=ft.Alignment.CENTER,
             )
 
@@ -496,7 +526,7 @@ def run_app(port: int = 8765) -> None:
                     for key, icon, selected_icon, label in NAV_ITEMS
                 ],
                 trailing=ft.Column(
-                    [health_doc_button, settings_button],
+                    [health_doc_button, activity_button, settings_button],
                     spacing=0,
                     tight=True,
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -598,14 +628,9 @@ def run_app(port: int = 8765) -> None:
 
             _watcher = start_watcher(_board_dir, _on_external_change)
 
-            _prev_kb_handler = page.on_keyboard_event
-
             def _global_keyboard(e: ft.KeyboardEvent) -> None:
                 if e.key == "K" and (e.ctrl or e.meta):
                     open_search_overlay(page, on_open_card)
-                    return
-                if _prev_kb_handler:
-                    _prev_kb_handler(e)
 
             page.on_keyboard_event = _global_keyboard
 

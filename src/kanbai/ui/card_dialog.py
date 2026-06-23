@@ -657,16 +657,17 @@ def open_edit_dialog(
     # Persisted fold state so sections stay open/closed across re-renders.
     fold_state = {"rel": False, "comments": True, "att": False, "checklist": bool(card.checklist), "refs": bool(card.file_refs)}
 
-    def _make_fold(state_key: str, title: "str | ft.Text", body: ft.Control) -> ft.Column:
+    def _make_fold(state_key: str, title: "str | ft.Text | ft.Control", body: ft.Control) -> ft.Column:
         is_open = fold_state.get(state_key, False)
         toggle_icon = ft.Text(
             "−" if is_open else "+",
             size=16, weight=ft.FontWeight.W_700, color="#8B949E",
         )
         body.visible = is_open
-        title_widget = title if isinstance(title, ft.Text) else ft.Text(
-            title, size=12, weight=ft.FontWeight.W_600, color="#C9D1D9"
-        )
+        if isinstance(title, (ft.Text, ft.Control)):
+            title_widget = title
+        else:
+            title_widget = ft.Text(title, size=12, weight=ft.FontWeight.W_600, color="#C9D1D9")
 
         def _toggle(e) -> None:
             new = not fold_state.get(state_key, False)
@@ -690,6 +691,12 @@ def open_edit_dialog(
 
     # ── Comments ──────────────────────────────────────────────────────────────
     comments_col = ft.Column(spacing=8)
+    comments_count_text = ft.Text(
+        f"Comments ({len(card.comments)})",
+        size=12,
+        weight=ft.FontWeight.W_600,
+        color="#C9D1D9",
+    )
     comment_role_dd = ft.Dropdown(
         value="note",
         options=[
@@ -743,6 +750,38 @@ def open_edit_dialog(
         text = cm.get("text", "")
         is_system = role == "system"
 
+        def _role_badge() -> ft.Control:
+            if is_system:
+                return ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(ft.Icons.AUTO_FIX_HIGH, size=8, color="#8B949E"),
+                            ft.Text(
+                                "SYSTEM",
+                                size=8,
+                                color="#8B949E",
+                                weight=ft.FontWeight.W_700,
+                            ),
+                        ],
+                        spacing=3,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    bgcolor="#1F2933",
+                    border_radius=3,
+                    padding=ft.Padding(3, 1, 3, 1),
+                )
+            return ft.Container(
+                content=ft.Text(
+                    role.upper(),
+                    size=8,
+                    color=role_color,
+                    weight=ft.FontWeight.W_700,
+                ),
+                bgcolor="#21262D",
+                border_radius=3,
+                padding=ft.Padding(3, 1, 3, 1),
+            )
+
         def _del(e, cid=cm.get("id")) -> None:
             nonlocal card
             def _do() -> None:
@@ -760,41 +799,34 @@ def open_edit_dialog(
             ft.Text(ts_str, size=10, color="#6E7681"),
         ]
         if role != "note":
-            timestamp_col_controls.append(
-                ft.Container(
-                    content=ft.Text(
-                        role.upper(),
-                        size=8,
-                        color=role_color,
-                        weight=ft.FontWeight.W_700,
-                    ),
-                    bgcolor="#21262D" if not is_system else "#1F2933",
-                    border_radius=3,
-                    padding=ft.Padding(3, 1, 3, 1),
+            timestamp_col_controls.append(_role_badge())
+
+        controls: list[ft.Control] = [
+            ft.Column(
+                timestamp_col_controls,
+                spacing=1,
+                width=76,
+            ),
+            ft.Text(
+                text,
+                size=11 if is_system else 12,
+                color="#8B949E" if is_system else "#C9D1D9",
+                selectable=True,
+                expand=True,
+            ),
+        ]
+        if not is_system:
+            controls.append(
+                ft.IconButton(
+                    ft.Icons.CANCEL, icon_size=12, icon_color="#6E7681",
+                    on_click=_del, tooltip="Delete comment",
+                    padding=ft.Padding(0, 0, 0, 0),
                 )
             )
 
         return ft.Container(
             content=ft.Row(
-                [
-                    ft.Column(
-                        timestamp_col_controls,
-                        spacing=1,
-                        width=76,
-                    ),
-                    ft.Text(
-                        text,
-                        size=11 if is_system else 12,
-                        color="#8B949E" if is_system else "#C9D1D9",
-                        selectable=True,
-                        expand=True,
-                    ),
-                    ft.IconButton(
-                        ft.Icons.CANCEL, icon_size=12, icon_color="#6E7681",
-                        on_click=_del, tooltip="Delete comment",
-                        padding=ft.Padding(0, 0, 0, 0),
-                    ),
-                ],
+                controls,
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.START,
             ),
@@ -805,6 +837,7 @@ def open_edit_dialog(
         )
 
     def _build_comments() -> None:
+        comments_count_text.value = f"Comments ({len(card.comments)})"
         comments_col.controls.clear()
         visible_comments = [
             cm for cm in sorted(card.comments, key=lambda c: c.get("created_at", ""))
@@ -843,8 +876,15 @@ def open_edit_dialog(
     def _comments_section(editable: bool) -> ft.Control:
         _build_comments()
 
+        system_status_text = ft.Text(
+            "System on" if _show_system_activity[0] else "System off",
+            size=10,
+            color="#8B949E",
+        )
+
         def _toggle_system_activity(_e) -> None:
             _set_system_activity_visible(not _show_system_activity[0])
+            system_status_text.value = "System on" if _show_system_activity[0] else "System off"
             _build_comments()
             page.update()
 
@@ -856,11 +896,7 @@ def open_edit_dialog(
                         content=ft.Row(
                             [
                                 ft.Icon(ft.Icons.INFO_OUTLINE, size=12, color="#8B949E"),
-                                ft.Text(
-                                    "System on" if _show_system_activity[0] else "System off",
-                                    size=10,
-                                    color="#8B949E",
-                                ),
+                                system_status_text,
                             ],
                             spacing=4,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -884,7 +920,7 @@ def open_edit_dialog(
                 )
             )
         body = ft.Column(children, spacing=8)
-        return _make_fold("comments", f"Comments ({len(card.comments)})", body)
+        return _make_fold("comments", comments_count_text, body)
 
     # ── Attachments ───────────────────────────────────────────────────────────
     att_error = ft.Text("", color=ft.Colors.RED_400, size=11)
