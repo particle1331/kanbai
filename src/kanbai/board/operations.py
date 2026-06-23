@@ -11,7 +11,7 @@ from kanbai.board import epics as _epics
 from kanbai.board import settings
 from kanbai.board import validation as _validation
 from kanbai.board.models import Card, _UNSET
-from kanbai.board.storage import event_log, markdown_store, sqlite_cache
+from kanbai.board.storage import activity_log, event_log, markdown_store, sqlite_cache
 from kanbai.paths import BOARD_DIR, ATTACHMENTS_DIR
 
 LINK_INVERSES: dict[str, str] = {
@@ -80,7 +80,15 @@ def _short(text: str, limit: int = 40) -> str:
     return value[: limit - 1] + "…"
 
 
-def _maybe_add_system_comment(card_id: str, text: str) -> None:
+def _maybe_add_system_comment(
+    card_id: str,
+    text: str,
+    *,
+    event_type: str = "system_comment",
+    **details,
+) -> None:
+    card = markdown_store.read_card(card_id)
+    activity_log.record_event(event_type, card=card, text=text, **details)
     if not settings.auto_work_log():
         return
     try:
@@ -145,6 +153,7 @@ def create_card(
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
     event_log.record_transition(card.id, None, card.lane, at=card.created_at)
+    activity_log.record_event("card_created", card=card)
     return card
 
 
@@ -245,38 +254,33 @@ def update_card(
     if priority is not None and card.priority != old_priority:
         _maybe_add_system_comment(card.id, f"Priority: {old_priority} → {card.priority}")
     if not isinstance(epic, _UnsetT) and (card.epic or None) != (old_epic or None):
-        if old_epic and card.epic:
-            epic_msg = f"Epic: {old_epic} → {card.epic}"
-        elif card.epic:
-            epic_msg = f"Epic: +{card.epic}"
-        elif old_epic:
-            epic_msg = f"Epic: -{old_epic}"
-        else:
-            epic_msg = "Epic cleared"
+        old_name = old_epic or "Unassigned"
+        new_name = card.epic or "Unassigned"
+        epic_msg = f"Epic changed from '{old_name}' to '{new_name}'"
         _maybe_add_system_comment(card.id, epic_msg)
     if assigned_to is not None and card.assigned_to != old_assigned:
         old_set = set(old_assigned)
         new_set = set(card.assigned_to)
         for name in card.assigned_to:
             if name not in old_set:
-                _maybe_add_system_comment(card.id, f"Assignee +{name}")
+                _maybe_add_system_comment(card.id, f"Assignee added: {name}")
         for name in old_assigned:
             if name not in new_set:
-                _maybe_add_system_comment(card.id, f"Assignee -{name}")
+                _maybe_add_system_comment(card.id, f"Assignee removed: {name}")
     if tags is not None and card.tags != old_tags:
         old_set = set(old_tags)
         new_set = set(card.tags)
         for tag in card.tags:
             if tag not in old_set:
-                _maybe_add_system_comment(card.id, f"Tag +{tag}")
+                _maybe_add_system_comment(card.id, f"Tag added: {tag}")
         for tag in old_tags:
             if tag not in new_set:
-                _maybe_add_system_comment(card.id, f"Tag -{tag}")
+                _maybe_add_system_comment(card.id, f"Tag removed: {tag}")
     if not isinstance(due_date, _UnsetT) and card.due_date != old_due_date:
         if old_due_date and card.due_date:
             _maybe_add_system_comment(card.id, f"Due date: {old_due_date} → {card.due_date}")
         elif card.due_date:
-            _maybe_add_system_comment(card.id, f"Due date: +{card.due_date}")
+            _maybe_add_system_comment(card.id, f"Due date added: {card.due_date}")
         elif old_due_date:
             _maybe_add_system_comment(card.id, "Due date cleared")
     if not isinstance(file_refs, _UnsetT) and card.file_refs != old_file_refs:
@@ -284,15 +288,15 @@ def update_card(
         new_set = set(card.file_refs)
         for ref in card.file_refs:
             if ref not in old_set:
-                _maybe_add_system_comment(card.id, f"File +{_validation.display_file_ref(ref)}")
+                _maybe_add_system_comment(card.id, f"File ref added: {_validation.display_file_ref(ref)}")
         for ref in old_file_refs:
             if ref not in new_set:
-                _maybe_add_system_comment(card.id, f"File -{_validation.display_file_ref(ref)}")
+                _maybe_add_system_comment(card.id, f"File ref removed: {_validation.display_file_ref(ref)}")
 
     return card
 
 
-def add_comment(card_id: str, text: str, role: str = "note") -> Card | None:
+def add_comment(card_id: str, text: str, role: str = "note", *, log_activity: bool = True) -> Card | None:
     """Append a timestamped comment (with an optional role) to a card."""
     text = (text or "").strip()
     if not text:
@@ -302,10 +306,13 @@ def add_comment(card_id: str, text: str, role: str = "note") -> Card | None:
         return None
     _validation.validate_comment(text, current_count=len(card.comments))
     _validation.validate_comment_role(role)
-    card.comments.append({"id": str(uuid.uuid4()), "text": text, "created_at": _now(), "role": role})
+    comment_id = str(uuid.uuid4())
+    card.comments.append({"id": comment_id, "text": text, "created_at": _now(), "role": role})
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    if log_activity and role != "system":
+        activity_log.record_event("comment_added", card=card, comment_id=comment_id, text=text, role=role)
     return card
 
 
@@ -314,12 +321,24 @@ def delete_comment(card_id: str, comment_id: str) -> Card | None:
     card = markdown_store.read_card(card_id)
     if not card:
         return None
+    removed = [c for c in card.comments if c.get("id") == comment_id]
+    if not removed:
+        return card
+    if (removed[0].get("role") or "note") == "system":
+        return card
     before = len(card.comments)
     card.comments = [c for c in card.comments if c.get("id") != comment_id]
     if len(card.comments) != before:
         card.updated_at = _now()
         markdown_store.write_card(card)
         sqlite_cache.upsert_card(card)
+        _maybe_add_system_comment(
+            card.id,
+            f"Comment removed: {_short(removed[0].get('text', ''))}",
+            event_type="comment_deleted",
+            comment_id=comment_id,
+            comment_text=_short(removed[0].get('text', '')),
+        )
     return card
 
 
@@ -346,6 +365,8 @@ def add_checklist_item(
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    activity_log.record_event("checklist_item_added", card=card, item_text=text, position=len(card.checklist) - 1)
+    _maybe_add_system_comment(card.id, f"Checklist added: {text}", event_type="checklist_item_added", item_text=text, item_index=len(card.checklist) - 1)
     return card
 
 
@@ -373,10 +394,17 @@ def remove_checklist_item(card_id: str, index: int) -> Card | None:
         return None
     if index < 0 or index >= len(card.checklist):
         return None
-    card.checklist.pop(index)
+    item = card.checklist.pop(index)
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    _maybe_add_system_comment(
+        card.id,
+        f"Checklist removed: {item.get('text', '')}",
+        event_type="checklist_item_deleted",
+        item_index=index,
+        item_text=item.get('text', ''),
+    )
     return card
 
 
@@ -422,6 +450,7 @@ def reorder_cards(target_lane: str, ordered_ids: list[str]) -> None:
             card.position = new_pos
             markdown_store.write_card(card)
             sqlite_cache.upsert_card(card)
+            activity_log.record_event("card_reordered", card=card, lane=target_lane, position=new_pos)
 
 
 def archive_card(card_id: str) -> Card | None:
@@ -513,6 +542,13 @@ def delete_card(card_id: str) -> bool:
                     target.updated_at = _now()
                     markdown_store.write_card(target)
                     sqlite_cache.upsert_card(target)
+    activity_log.record_event(
+        "card_deleted",
+        card=card,
+        checklist_items=len(card.checklist),
+        comment_count=len(card.comments),
+        link_count=len(card.links),
+    )
     # Delete markdown file and cache row.
     card_path = markdown_store.BOARD_DIR / card.lane / f"{card.id}.md"
     if card_path.exists():
@@ -553,8 +589,8 @@ def link_cards(from_number: int, to_number: int, link_type: str) -> str | None:
     sqlite_cache.upsert_card(from_card)
     markdown_store.write_card(to_card)
     sqlite_cache.upsert_card(to_card)
-    _maybe_add_system_comment(from_card.id, f"Link +#{to_number} ({link_type})")
-    _maybe_add_system_comment(to_card.id, f"Link +#{from_number} ({inverse})")
+    _maybe_add_system_comment(from_card.id, f"Relationship added: #{to_number} ({link_type})")
+    _maybe_add_system_comment(to_card.id, f"Relationship added: #{from_number} ({inverse})")
     return None
 
 
@@ -590,8 +626,8 @@ def unlink_cards(from_number: int, to_number: int, link_type: str) -> str | None
     sqlite_cache.upsert_card(from_card)
     markdown_store.write_card(to_card)
     sqlite_cache.upsert_card(to_card)
-    _maybe_add_system_comment(from_card.id, f"Link -#{to_number} ({link_type})")
-    _maybe_add_system_comment(to_card.id, f"Link -#{from_number} ({inverse})")
+    _maybe_add_system_comment(from_card.id, f"Relationship removed: #{to_number} ({link_type})")
+    _maybe_add_system_comment(to_card.id, f"Relationship removed: #{from_number} ({inverse})")
     return None
 
 
@@ -674,6 +710,7 @@ def add_attachment(card_id: str, src_path: str) -> str | None:
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    _maybe_add_system_comment(card.id, f"Attachment added: {filename}", event_type="attachment_added", filename=filename)
     return None
 
 
@@ -735,6 +772,7 @@ def add_attachment_bytes(card_id: str, filename: str, data: bytes) -> str | None
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    _maybe_add_system_comment(card.id, f"Attachment added: {safe_name}", event_type="attachment_added", filename=safe_name)
     return None
 
 
@@ -757,6 +795,7 @@ def remove_attachment(card_id: str, filename: str) -> str | None:
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    _maybe_add_system_comment(card.id, f"Attachment removed: {filename}", event_type="attachment_removed", filename=filename)
     return None
 
 
@@ -785,7 +824,7 @@ def add_file_ref(card_id: str, path: str) -> str | None:
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
-    _maybe_add_system_comment(card.id, f"File +{_validation.display_file_ref(stored)}")
+    _maybe_add_system_comment(card.id, f"File ref added: {_validation.display_file_ref(stored)}")
     return None
 
 
@@ -811,7 +850,7 @@ def remove_file_ref(card_id: str, path: str) -> str | None:
             card.updated_at = _now()
             markdown_store.write_card(card)
             sqlite_cache.upsert_card(card)
-            _maybe_add_system_comment(card.id, f"File -{_validation.display_file_ref(candidate)}")
+            _maybe_add_system_comment(card.id, f"File ref removed: {_validation.display_file_ref(candidate)}")
             return None
     return f"File reference '{path}' not found on card."
 

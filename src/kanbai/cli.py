@@ -178,6 +178,9 @@ def init(
     # transitions log
     (kanbai_dir / "transitions.jsonl").write_text("")
 
+    # activity log
+    (kanbai_dir / "activity.jsonl").write_text("")
+
     # models.yml — AI model config (chat panel)
     (kanbai_dir / "models.yml").write_text(
         "# AI models for the kanbai chat panel.\n"

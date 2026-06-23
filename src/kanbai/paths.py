@@ -53,6 +53,7 @@ COUNTER_PATH = BOARD_DIR / "counter.json"
 EPICS_PATH = BOARD_DIR / "epics.json"
 SETTINGS_PATH = BOARD_DIR / "settings.json"
 TRANSITIONS_LOG = BOARD_DIR / "transitions.jsonl"
+ACTIVITY_LOG = BOARD_DIR / "activity.jsonl"
 
 # ── Runtime files ───────────────────────────────────────────────────────────
 CACHE_DB = BOARD_DIR / ".cache.db"

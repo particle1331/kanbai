@@ -8,7 +8,7 @@ from kanbai.board import operations
 from kanbai.board import settings
 from kanbai.board import validation
 from kanbai.board.models import Card
-from kanbai.board.storage import event_log, markdown_store, sqlite_cache
+from kanbai.board.storage import activity_log, event_log, markdown_store, sqlite_cache
 
 
 def _configure_board(tmp_path: Path, monkeypatch, *, auto_work_log: bool = True) -> Path:
@@ -26,6 +26,7 @@ def _configure_board(tmp_path: Path, monkeypatch, *, auto_work_log: bool = True)
     monkeypatch.setattr(_paths, "EPICS_PATH", board_dir / "epics.json")
     monkeypatch.setattr(_paths, "SETTINGS_PATH", board_dir / "settings.json")
     monkeypatch.setattr(_paths, "TRANSITIONS_LOG", board_dir / "transitions.jsonl")
+    monkeypatch.setattr(_paths, "ACTIVITY_LOG", board_dir / "activity.jsonl")
     monkeypatch.setattr(_paths, "CACHE_DB", board_dir / ".cache.db")
     monkeypatch.setattr(_paths, "UI_STATE_PATH", board_dir / "ui_state.json")
 
@@ -35,6 +36,7 @@ def _configure_board(tmp_path: Path, monkeypatch, *, auto_work_log: bool = True)
     monkeypatch.setattr(sqlite_cache, "DB_PATH", board_dir / ".cache.db")
     monkeypatch.setattr(_counter, "COUNTER_PATH", board_dir / "counter.json")
     monkeypatch.setattr(event_log, "TRANSITIONS_LOG", board_dir / "transitions.jsonl")
+    monkeypatch.setattr(activity_log, "ACTIVITY_LOG", board_dir / "activity.jsonl")
     monkeypatch.setattr(settings, "_cache", {"auto_work_log": auto_work_log})
 
     sqlite_cache.init_db()
@@ -59,6 +61,8 @@ def test_auto_work_log_records_concise_system_comments(tmp_path: Path, monkeypat
     alpha_num = alpha.number
     beta_num = beta.number
 
+    operations.reorder_cards("backlog", [beta.id, alpha.id])
+    assert operations.add_comment(alpha.id, "Working note") is not None
     operations.update_card(
         alpha.id,
         title="Alpha v2",
@@ -70,6 +74,10 @@ def test_auto_work_log_records_concise_system_comments(tmp_path: Path, monkeypat
     assert operations.add_file_ref(alpha.id, "src/foo.py") is None
     assert operations.add_checklist_item(alpha.id, "Write tests") is not None
     operations.toggle_checklist_item(alpha.id, 0)
+    assert operations.add_checklist_item(alpha.id, "Remove me") is not None
+    operations.remove_checklist_item(alpha.id, 1)
+    assert operations.add_attachment_bytes(alpha.id, "spec.txt", b"hello") is None
+    assert operations.remove_attachment(alpha.id, "spec.txt") is None
     assert operations.link_cards(alpha_num, beta_num, "blocks") is None
     operations.archive_card(alpha.id)
     operations.unarchive_card(alpha.id)
@@ -81,14 +89,42 @@ def test_auto_work_log_records_concise_system_comments(tmp_path: Path, monkeypat
 
     assert "Title: \"Alpha\" → \"Alpha v2\"" in texts
     assert "Priority: medium → high" in texts
-    assert "Tag +feature" in texts
-    assert "Due date: +2026-07-01" in texts
+    assert "Tag added: feature" in texts
+    assert "Due date added: 2026-07-01" in texts
     assert "Moved: backlog → in_progress" in texts
-    assert "File +src/foo.py" in texts
+    assert "File ref added: src/foo.py" in texts
+    assert "Checklist added: Write tests" in texts
     assert "Checklist done: Write tests" in texts
-    assert f"Link +#{beta_num} (blocks)" in texts
+    assert "Checklist removed: Remove me" in texts
+    assert "Attachment added: spec.txt" in texts
+    assert "Attachment removed: spec.txt" in texts
+    assert f"Relationship added: #{beta_num} (blocks)" in texts
     assert "Archived" in texts
     assert "Restored" in texts
+
+    activity_events = activity_log.read_all()
+    assert any(e.get("type") == "card_created" and e.get("card_id") == alpha.id for e in activity_events)
+    assert any(e.get("type") == "comment_added" and e.get("card_id") == alpha.id and e.get("text") == "Working note" for e in activity_events)
+    assert any(e.get("type") == "checklist_item_added" and e.get("card_id") == alpha.id and e.get("item_text") == "Write tests" for e in activity_events)
+    assert any(e.get("type") == "card_reordered" and e.get("card_id") == alpha.id for e in activity_events)
+    assert any(
+        e.get("type") == "checklist_item_deleted"
+        and e.get("card_id") == alpha.id
+        and e.get("item_text") == "Remove me"
+        for e in activity_events
+    )
+    assert any(
+        e.get("type") == "attachment_added"
+        and e.get("card_id") == alpha.id
+        and e.get("filename") == "spec.txt"
+        for e in activity_events
+    )
+    assert any(
+        e.get("type") == "attachment_removed"
+        and e.get("card_id") == alpha.id
+        and e.get("filename") == "spec.txt"
+        for e in activity_events
+    )
 
     raw_card = (project_root / ".kanbai" / "in_progress" / f"{alpha.id}.md").read_text(encoding="utf-8")
     assert "role: system" in raw_card
@@ -96,7 +132,7 @@ def test_auto_work_log_records_concise_system_comments(tmp_path: Path, monkeypat
     linked = operations.get_card(beta.id)
     assert linked is not None
     linked_texts = [c.get("text") for c in linked.comments if c.get("role") == "system"]
-    assert f"Link +#{alpha_num} (blocked_by)" in linked_texts
+    assert f"Relationship added: #{alpha_num} (blocked_by)" in linked_texts
 
 
 def test_auto_work_log_can_be_disabled_globally(tmp_path: Path, monkeypatch) -> None:
@@ -109,3 +145,16 @@ def test_auto_work_log_can_be_disabled_globally(tmp_path: Path, monkeypatch) -> 
     refreshed = operations.get_card(card.id)
     assert refreshed is not None
     assert refreshed.comments == []
+
+
+def test_card_deletion_is_recorded_in_global_activity_log(tmp_path: Path, monkeypatch) -> None:
+    _configure_board(tmp_path, monkeypatch, auto_work_log=False)
+
+    card = _make_card("Delete me", lane="backlog")
+    assert operations.delete_card(card.id) is True
+
+    events = activity_log.read_all()
+    deleted = [e for e in events if e.get("type") == "card_deleted" and e.get("card_id") == card.id]
+    assert deleted, events
+    assert deleted[-1].get("card_title") == "Delete me"
+    assert deleted[-1].get("card_lane") == "backlog"
