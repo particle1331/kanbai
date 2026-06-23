@@ -9,12 +9,15 @@
 
 ## Quick Setup
 
+If you want the agent client to spawn Kanbai as a subprocess, use stdio
+(with this repo's local `.venv` interpreter):
+
 ```json
 {
   "servers": {
     "kanbai": {
       "type": "stdio",
-      "command": "kanbai",
+      "command": ".venv/bin/kanbai",
       "args": ["serve", "--mcp"],
       "env": { "KANBAI_MCP_ACCESS": "write" }
     }
@@ -22,8 +25,27 @@
 }
 ```
 
+If your board is already running with `kanbai serve`, you can also connect
+to the live SSE endpoint instead:
+
+```json
+{
+  "servers": {
+    "kanbai": {
+      "type": "sse",
+      "url": "http://localhost:3001/sse"
+    }
+  }
+}
+```
+
 That's it. The agent's working directory must be within a repo that has `.kanbai/`
 (or any parent directory). Kanbai auto-discovers the board.
+
+File refs are entered as paths relative to the board's `project_root`, then
+resolved and stored internally as absolute paths.
+The MCP/UI layer resolves them against that root automatically; agents do not
+need to look up the root just to add a file ref.
 
 ---
 
@@ -73,6 +95,7 @@ cannot reach them.
 | `list_epics` | Epic names (optionally including archived) |
 | `get_epic` | Epic detail: description, comments, archived status |
 | `get_board_summary` | Aggregated analytics: lane counts, completion %, CFD, heatmap |
+| `get_project_root` | Absolute path of the target repo root for resolving file refs |
 | `project_health` | Overall health (good/watch/bad) + 8 signals |
 | `health_model` | Full health model documentation |
 | `list_docs` / `get_doc` | Discover and read kanbai documentation |
@@ -81,8 +104,8 @@ cannot reach them.
 
 | Tool | Description |
 |------|-------------|
-| `create_card` | Create a card (with optional epic, due date, tags) |
-| `update_card` | Update fields (title, desc, tags, priority, epic, due date) |
+| `create_card` | Create a card (with optional epic, due date, tags, file refs) |
+| `update_card` | Update fields (title, desc, tags, priority, epic, due date, file refs) |
 | `move_card` | Move a card to another lane |
 | `archive_card` / `unarchive_card` | Soft-delete / restore |
 | `set_card_epic` | Assign epic by card number |
@@ -90,6 +113,7 @@ cannot reach them.
 | `set_epic_description` | Set/replace epic description |
 | `add_epic_comment` / `delete_epic_comment` | Epic comments |
 | `add_card_comment` / `delete_card_comment` | Card comments |
+| `add_file_ref` / `remove_file_ref` | Attach or detach file refs (input relative, stored absolute) |
 | `link_cards` / `unlink_cards` | Typed relationships (auto-inverse) |
 
 ### Yolo tier

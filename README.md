@@ -8,7 +8,6 @@ Kanbai lives **inside** your project as a `.kanbai/` directory. It provides:
 - **An MCP server** for AI agents to manage cards, report progress, and read health signals
 - **A CLI** for quick terminal actions and scripting
 
-
 ---
 
 ## Table of Contents
@@ -135,6 +134,7 @@ kanbai init --from /path/to/old/board_data
 ```
 
 This creates a `.kanbai/` directory with:
+
 - Lane subdirectories (`backlog/`, `in_progress/`, `review/`, `done/`)
 - `counter.json` — monotonic card number counter
 - `epics.json` — epic definitions
@@ -161,6 +161,7 @@ kanbai serve --mcp
 ```
 
 When you run `kanbai` or `kanbai serve`:
+
 - The **Flet UI** opens in your browser — this is your command center
 - An **MCP SSE server** starts on port 3001 — agents can connect to it
 - The UI **auto-refreshes** when agents or CLI commands modify the board
@@ -178,6 +179,7 @@ kanbai add "Write API docs" --tags "docs,api" --epic backend --due 2026-07-15
 ```
 
 Options:
+
 - `--lane`, `-l` — Lane: `backlog` (default), `in_progress`, `review`, `done`
 - `--priority`, `-p` — Priority: `low`, `medium` (default), `high`, `critical`
 - `--tags`, `-t` — Comma-separated tags
@@ -361,7 +363,7 @@ Add to your agent's MCP configuration:
   "servers": {
     "kanbai": {
       "type": "stdio",
-      "command": "kanbai",
+      "command": ".venv/bin/kanbai",
       "args": ["serve", "--mcp"]
     }
   }
@@ -374,9 +376,23 @@ Add to your agent's MCP configuration:
 {
   "mcpServers": {
     "kanbai": {
-      "command": "kanbai",
-      "args": ["serve", "--mcp"],
-      "env": { "KANBAI_MCP_ACCESS": "write" }
+      "type": "stdio",
+      "command": ".venv/bin/kanbai",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+If your board is already running with `kanbai serve`, you can also connect
+to the live SSE endpoint instead:
+
+```json
+{
+  "servers": {
+    "kanbai": {
+      "type": "sse",
+      "url": "http://localhost:3001/sse"
     }
   }
 }
@@ -395,11 +411,11 @@ Control what agents can do via the `KANBAI_MCP_ACCESS` environment variable:
 | `write` *(default)* | Read + create/update/move/archive/link/epics/comments | Trusted automation |
 | `yolo` | Write + permanent delete | Full trust; irreversible operations |
 
-### Available Tools (15+)
+### Available Tools (16+)
 
-**Read:** `list_cards`, `get_card`, `list_epics`, `get_epic`, `get_board_summary`, `project_health`, `health_model`, `list_docs`, `get_doc`
+**Read:** `list_cards`, `get_card`, `list_epics`, `get_epic`, `get_board_summary`, `get_project_root`, `project_health`, `health_model`, `list_docs`, `get_doc`
 
-**Write:** `create_card`, `update_card`, `move_card`, `archive_card`, `unarchive_card`, `set_card_epic`, `create_epic`, `archive_epic`, `unarchive_epic`, `set_epic_description`, `add_epic_comment`, `delete_epic_comment`, `add_card_comment`, `delete_card_comment`, `link_cards`, `unlink_cards`
+**Write:** `create_card`, `update_card`, `move_card`, `archive_card`, `unarchive_card`, `set_card_epic`, `create_epic`, `archive_epic`, `unarchive_epic`, `set_epic_description`, `add_epic_comment`, `delete_epic_comment`, `add_card_comment`, `delete_card_comment`, `link_cards`, `unlink_cards`, `add_file_ref`, `remove_file_ref`
 
 **Yolo:** `delete_card`
 
@@ -410,7 +426,9 @@ A typical agent workflow:
 1. Agent reads the board: `list_cards(lane="in_progress")`
 2. Agent completes work and moves card: `move_card(card_id, "review")`
 3. Agent adds a comment: `add_card_comment(card_id, "Implemented in commit abc123")`
-4. Human sees the update live in the UI
+4. Agent adds or updates file refs with `add_file_ref` / `remove_file_ref`
+   (input is relative; Kanbai stores absolute paths)
+5. Human sees the update live in the UI
 
 ---
 
