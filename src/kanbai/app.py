@@ -471,7 +471,6 @@ def run_app(port: int = 8765) -> None:
 
             def _open_activity_view(_e) -> None:
                 _show_view("activity")
-                sidebar.selected_index = NAV_INDEX["activity"]
                 if activity_pg:
                     activity_pg.refresh()
                 page.update()

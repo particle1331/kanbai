@@ -301,7 +301,10 @@ class ActivityPage:
         return view
 
     def refresh(self) -> None:
-        self._events = activity_log.read_all()
+        self._events = [
+            event for event in activity_log.read_all()
+            if event.get("type") != "card_reordered"
+        ]
         if self._list is None:
             return
         filtered = self._filtered_events()

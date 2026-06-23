@@ -450,7 +450,6 @@ def reorder_cards(target_lane: str, ordered_ids: list[str]) -> None:
             card.position = new_pos
             markdown_store.write_card(card)
             sqlite_cache.upsert_card(card)
-            activity_log.record_event("card_reordered", card=card, lane=target_lane, position=new_pos)
 
 
 def archive_card(card_id: str) -> Card | None:
