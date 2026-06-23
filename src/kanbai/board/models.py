@@ -75,6 +75,8 @@ class Card:
 
     @classmethod
     def from_frontmatter(cls, meta: dict, body: str = "") -> Card:
+        from kanbai.board.validation import coerce_stored_file_ref
+
         return cls(
             id=str(meta["id"]),
             title=str(meta["title"]),
@@ -94,5 +96,5 @@ class Card:
             position=float(meta.get("position") or 0.0),
             due_date=meta.get("due_date") or None,
             checklist=list(meta.get("checklist") or []),
-            file_refs=list(meta.get("file_refs") or []),
+            file_refs=[coerce_stored_file_ref(ref) for ref in list(meta.get("file_refs") or [])],
         )

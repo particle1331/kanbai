@@ -59,6 +59,19 @@ def _dedup_ci(names: list[str] | None) -> list[str]:
     return out
 
 
+def _dedup_exact(values: list[str] | None) -> list[str]:
+    """Strip, drop blanks, and dedupe strings case-sensitively while preserving order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in values or []:
+        val = raw.strip()
+        if not val or val in seen:
+            continue
+        seen.add(val)
+        out.append(val)
+    return out
+
+
 def create_card(
     title: str,
     lane: str,
@@ -68,12 +81,14 @@ def create_card(
     epic: str | None = None,
     assigned_to: list[str] | None = None,
     due_date: str | None = None,
+    file_refs: list[str] | None = None,
 ) -> Card:
     _validation.validate_card_fields(
         title=title,
         description=description,
         tags=tags,
         assigned_to=assigned_to,
+        file_refs=file_refs,
         epic=epic,
     )
     _validation.validate_due_date(due_date)
@@ -91,6 +106,10 @@ def create_card(
             f"'{_bucket}' already has the maximum of "
             f"{_validation.MAX_CARDS_PER_EPIC} active cards."
         )
+    normalized_file_refs = [
+        _validation.normalize_file_ref(ref)
+        for ref in _dedup_exact(file_refs)
+    ]
     card = Card(
         id=str(uuid.uuid4()),
         title=title,
@@ -104,6 +123,7 @@ def create_card(
         number=_counter.next_number(),
         assigned_to=_dedup_ci(assigned_to),
         due_date=due_date or None,
+        file_refs=normalized_file_refs,
     )
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
@@ -136,6 +156,7 @@ def update_card(
     epic=_UNSET,
     assigned_to: list[str] | None = None,
     due_date=_UNSET,
+    file_refs=_UNSET,
 ) -> Card | None:
     from kanbai.board.models import _Unset as _UnsetT  # local import avoids private-export lint
     _validation.validate_card_fields(
@@ -143,6 +164,7 @@ def update_card(
         description=description,
         tags=tags,
         assigned_to=assigned_to,
+        file_refs=None if isinstance(file_refs, _UnsetT) else file_refs,  # type: ignore[arg-type]
         epic=None if isinstance(epic, _UnsetT) else epic,  # type: ignore[arg-type]
     )
     if not isinstance(due_date, _UnsetT):
@@ -179,6 +201,11 @@ def update_card(
         card.assigned_to = _dedup_ci(assigned_to)
     if not isinstance(due_date, _UnsetT):
         card.due_date = due_date or None  # type: ignore[assignment]
+    if not isinstance(file_refs, _UnsetT):
+        card.file_refs = [
+            _validation.normalize_file_ref(ref)
+            for ref in _dedup_exact(file_refs)
+        ]  # type: ignore[assignment]
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
@@ -645,9 +672,9 @@ def remove_attachment(card_id: str, filename: str) -> str | None:
 def add_file_ref(card_id: str, path: str) -> str | None:
     """Append a file reference to a card.
 
-    *path* is a relative file path with an optional line range suffix:
-    ``"src/foo.py"`` or ``"src/foo.py:10-30"``.  Returns an error string on
-    failure, or ``None`` on success.
+    *path* is a project-root-relative file path with an optional line range suffix:
+    ``"src/foo.py"`` or ``"src/foo.py:10-30"``. The stored value is the absolute
+    path inside the target repo.
     """
     card = markdown_store.read_card(card_id)
     if not card:
@@ -655,12 +682,13 @@ def add_file_ref(card_id: str, path: str) -> str | None:
     path = (path or "").strip()
     try:
         _validation.validate_file_ref(path, len(card.file_refs))
+        stored = _validation.normalize_file_ref(path)
     except ValueError as ex:
         return str(ex)
     # Avoid exact duplicates.
-    if path in card.file_refs:
+    if stored in card.file_refs:
         return None  # idempotent — not an error
-    card.file_refs.append(path)
+    card.file_refs.append(stored)
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
@@ -668,20 +696,29 @@ def add_file_ref(card_id: str, path: str) -> str | None:
 
 
 def remove_file_ref(card_id: str, path: str) -> str | None:
-    """Remove a file reference from a card by its exact path string.
+    """Remove a file reference from a card by its input path string.
 
     Returns an error string on failure, or ``None`` on success.
     """
     card = markdown_store.read_card(card_id)
     if not card:
         return "Card not found."
-    if path not in card.file_refs:
-        return f"File reference '{path}' not found on card."
-    card.file_refs = [r for r in card.file_refs if r != path]
-    card.updated_at = _now()
-    markdown_store.write_card(card)
-    sqlite_cache.upsert_card(card)
-    return None
+    raw = (path or "").strip()
+    candidates = []
+    if raw:
+        candidates.append(raw)
+        try:
+            candidates.append(_validation.normalize_file_ref(raw))
+        except ValueError:
+            pass
+    for candidate in candidates:
+        if candidate in card.file_refs:
+            card.file_refs = [r for r in card.file_refs if r != candidate]
+            card.updated_at = _now()
+            markdown_store.write_card(card)
+            sqlite_cache.upsert_card(card)
+            return None
+    return f"File reference '{path}' not found on card."
 
 
 def cleanup_attachments(dry_run: bool = True, days: int = 90) -> dict:

@@ -124,14 +124,16 @@ def init(
             typer.echo(f"Error: {src} is not a directory.", err=True)
             raise typer.Exit(1)
         shutil.copytree(src, kanbai_dir)
-        # Ensure settings has git_tracking key
+        # Ensure settings has git_tracking and project_root keys
         settings_file = kanbai_dir / "settings.json"
         if settings_file.exists():
             import json as _json
             data = _json.loads(settings_file.read_text())
             if "git_tracking" not in data:
                 data["git_tracking"] = not no_git
-                settings_file.write_text(_json.dumps(data, indent=2))
+            if "project_root" not in data:
+                data["project_root"] = str(cwd.resolve())
+            settings_file.write_text(_json.dumps(data, indent=2))
         # Ensure .gitignore
         gitignore = kanbai_dir / ".gitignore"
         if not gitignore.exists():
@@ -157,6 +159,7 @@ def init(
     # settings.json
     settings = {
         "git_tracking": not no_git,
+        "project_root": str(cwd.resolve()),
         "use_local_tz": True,
         "reasoning_effort": "none",
         "max_completion_tokens": 2048,
@@ -222,6 +225,9 @@ def serve(
     """
     project_root = require_kanbai_root()
     _set_project_env(project_root)
+
+    from kanbai.board import settings as _settings
+    _settings.set_project_root(str(project_root))
 
     # Load .env from project root if present
     from dotenv import load_dotenv

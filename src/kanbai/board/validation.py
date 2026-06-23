@@ -9,6 +9,8 @@ MCP tool handlers) surface the reason without catching separate exception types.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 # ── Hard limits ────────────────────────────────────────────────────────────────
 
 MAX_TITLE       = 200
@@ -48,12 +50,81 @@ WARN_TOTAL_ATTACHMENTS_MB = 400  # board-wide: health signal goes watch
 
 # ── Validators ────────────────────────────────────────────────────────────────
 
+def resolve_target_repo_path(ref: str) -> tuple[str, Path]:
+    """Resolve a project-root-relative ref to a concrete file path in the target repo.
+
+    Returns (file_part, resolved_path). The ref may include an optional line
+    range suffix like ':10-30'; only the file portion is used for filesystem
+    validation.
+    """
+    import kanbai.paths as _paths
+
+    p = (ref or "").strip()
+    file_part = p.split(":")[0]
+    target = (_paths.PROJECT_ROOT / file_part).resolve()
+    try:
+        target.relative_to(_paths.PROJECT_ROOT.resolve())
+    except ValueError:
+        raise ValueError("file_ref: must stay within the target repository.")
+    return file_part, target
+
+
+def normalize_file_ref(ref: str) -> str:
+    """Convert a project-root-relative file ref to the absolute stored form.
+
+    The line-range suffix, when present, is preserved verbatim.
+    """
+    p = (ref or "").strip()
+    file_part, target = resolve_target_repo_path(p)
+    suffix = p[len(file_part):]
+    return str(target) + suffix
+
+
+def coerce_stored_file_ref(ref: str) -> str:
+    """Return the stored form for a file ref, preserving already-absolute refs.
+
+    Relative refs are resolved against the current project root; absolute refs
+    are returned unchanged.
+    """
+    p = (ref or "").strip()
+    if not p:
+        return p
+    file_part = p.split(":")[0]
+    if Path(file_part).is_absolute():
+        return p
+    return normalize_file_ref(p)
+
+
+def display_file_ref(ref: str) -> str:
+    """Convert a stored file ref to the project-root-relative display form.
+
+    If the ref is not inside the current project root, return it unchanged.
+    The line-range suffix, when present, is preserved verbatim.
+    """
+    import kanbai.paths as _paths
+
+    p = (ref or "").strip()
+    if not p:
+        return p
+    file_part = p.split(":")[0]
+    suffix = p[len(file_part):]
+    try:
+        target = Path(file_part)
+        if not target.is_absolute():
+            target = _paths.PROJECT_ROOT / target
+        rel = target.resolve().relative_to(_paths.PROJECT_ROOT.resolve())
+    except Exception:
+        return p
+    return f"{rel}{suffix}"
+
+
 def validate_card_fields(
     title: str | None = None,
     description: str | None = None,
     tags: list[str] | None = None,
     assigned_to: list[str] | None = None,
     links: list[dict] | None = None,
+    file_refs: list[str] | None = None,
     epic: str | None = None,
 ) -> None:
     """Raise ``ValueError`` with a human-readable message on any hard-limit violation."""
@@ -108,6 +179,14 @@ def validate_card_fields(
             f"links: maximum {MAX_LINKS} relationships per card allowed "
             f"(got {len(links)})."
         )
+
+    if file_refs is not None:
+        if len(file_refs) > MAX_FILE_REFS:
+            raise ValueError(
+                f"file_refs: maximum {MAX_FILE_REFS} references per card."
+            )
+        for i, ref in enumerate(file_refs):
+            validate_file_ref(ref, i)
 
     if epic is not None and len(epic) > MAX_EPIC_LEN:
         raise ValueError(
@@ -189,10 +268,12 @@ def validate_attachment(src_path: str, current_count: int) -> None:
 
 
 def validate_file_ref(path: str, current_count: int) -> None:
-    """Raise ``ValueError`` if the file reference path is invalid or limits are exceeded."""
+    """Raise ``ValueError`` if the project-root-relative file reference is invalid.
+
+    The raw ref stored on the card remains relative; resolution against
+    ``PROJECT_ROOT`` happens only for validation.
+    """
     import re
-    from pathlib import Path
-    import kanbai.paths as _paths
 
     p = (path or "").strip()
     if not p:
@@ -217,11 +298,7 @@ def validate_file_ref(path: str, current_count: int) -> None:
             "file_ref: invalid format. Use 'path/to/file' or 'path/to/file:10-30'."
         )
 
-    target = (_paths.PROJECT_ROOT / file_part).resolve()
-    try:
-        target.relative_to(_paths.PROJECT_ROOT.resolve())
-    except ValueError:
-        raise ValueError("file_ref: must stay within the target repository.")
+    _, target = resolve_target_repo_path(p)
     if not target.exists():
         raise ValueError(f"file_ref: file not found in target repository: {file_part}")
     if not target.is_file():

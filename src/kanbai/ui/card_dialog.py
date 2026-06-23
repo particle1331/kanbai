@@ -17,6 +17,7 @@ _SIDEBAR_WIDTH = 280
 from kanbai.board import epics as _epics
 from kanbai.board import operations
 from kanbai.board import settings
+from kanbai.board import validation as _validation
 from kanbai.board.models import Card, LANE_LABELS, LANES
 from kanbai.board.settings import DEFAULT_TAGS
 from kanbai.board.storage import sqlite_cache as _sc
@@ -198,6 +199,10 @@ def _chip_input(
     return widget, lambda: list(values)
 
 
+def _parse_file_refs(raw: str | None) -> list[str]:
+    return [line.strip() for line in (raw or "").splitlines() if line.strip()]
+
+
 def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epic: str | None = None) -> None:
     title_field = ft.TextField(label="Title", autofocus=True)
     desc_field = ft.TextField(
@@ -209,6 +214,14 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
     _assignee_sugg = _sc.get_all_assignees()
     tags_widget, get_tags = _chip_input(page, "Tags", [], _tag_sugg)
     assigned_widget, get_assigned = _chip_input(page, "Assigned to", [], _assignee_sugg, accent="#DB8132")
+    file_refs_field = ft.TextField(
+        label="File refs",
+        hint_text="One path relative to the project root per line",
+        multiline=True,
+        min_lines=2,
+        max_lines=6,
+        text_size=12,
+    )
     due_row, due_field = _make_due_field(page)
     priority_dd = ft.Dropdown(
         label="Priority",
@@ -242,6 +255,9 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
         on_change=lambda e: _refresh_results(),
     )
     results_col = ft.Column(spacing=2, height=0)
+
+    def _parse_file_refs(raw: str | None) -> list[str]:
+        return [line.strip() for line in (raw or "").splitlines() if line.strip()]
 
     def _build_link_rows() -> None:
         links_col.controls.clear()
@@ -422,6 +438,7 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
                 priority=priority_dd.value or "medium",
                 epic=default_epic,
                 assigned_to=assigned,
+                file_refs=_parse_file_refs(file_refs_field.value),
                 due_date=(due_field.value or "").strip() or None,
             )
         except (operations.EpicArchivedError, ValueError) as ex:
@@ -486,6 +503,8 @@ def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epi
                                 tags_widget,
                                 ft.Container(height=4),
                                 assigned_widget,
+                                ft.Container(height=4),
+                                file_refs_field,
                                 ft.Container(height=4),
                                 due_row,
                                 error_text,
@@ -559,6 +578,15 @@ def open_edit_dialog(
     _assignee_sugg = _sc.get_all_assignees()
     tags_widget, get_tags = _chip_input(page, "Tags", card.tags, _tag_sugg)
     assigned_widget, get_assigned = _chip_input(page, "Assigned to", card.assigned_to, _assignee_sugg, accent="#DB8132")
+    file_refs_field = ft.TextField(
+        label="File refs",
+        hint_text="One path relative to the project root per line",
+        value="\n".join(_validation.display_file_ref(ref) for ref in (card.file_refs or [])),
+        multiline=True,
+        min_lines=2,
+        max_lines=6,
+        text_size=12,
+    )
     due_row, due_field = _make_due_field(page, card.due_date or "")
     priority_dd = ft.Dropdown(
         label="Priority",
@@ -988,7 +1016,7 @@ def open_edit_dialog(
     def _build_file_refs() -> None:
         _file_refs_title.value = _file_refs_title_str()
         file_refs_col.controls.clear()
-        refs = card.file_refs or []
+        refs = [_validation.display_file_ref(ref) for ref in (card.file_refs or [])]
         if not refs:
             file_refs_col.controls.append(
                 ft.Text("No file refs yet.", size=11, color="#6E7681", italic=True)
@@ -1426,6 +1454,7 @@ def open_edit_dialog(
                 priority=priority_dd.value,
                 epic=epic_val,
                 assigned_to=assigned,
+                file_refs=_parse_file_refs(file_refs_field.value),
                 due_date=(due_field.value or "").strip() or None,
             )
         except (operations.EpicArchivedError, ValueError) as ex:

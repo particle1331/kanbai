@@ -93,6 +93,9 @@ class ReasoningEffort(str, Enum):
             return cls.NONE
 
 _DEFAULTS: dict = {
+    # Absolute filesystem path of the target project repository root.
+    # Persisted in settings.json so tools/agents can resolve repo-relative refs.
+    "project_root": "",
     # Display stored UTC timestamps in the local timezone (True) or as UTC (False).
     # App-wide: affects the analytics board and kanban card dates.
     "use_local_tz": True,
@@ -143,6 +146,16 @@ def _load() -> dict:
 def _save() -> None:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(_load(), indent=2), encoding="utf-8")
+
+
+def project_root() -> str:
+    """Return the persisted absolute project root path, or an empty string."""
+    return str(_load().get("project_root", "") or "")
+
+
+def set_project_root(value: str) -> None:
+    _load()["project_root"] = str(value or "")
+    _save()
 
 
 def use_local_tz() -> bool:

@@ -18,8 +18,11 @@ def _all_md_files() -> list[Path]:
 
 
 def write_card(card: Card) -> None:
+    from kanbai.board.validation import coerce_stored_file_ref
+
     dest = _card_path(card)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    card.file_refs = [coerce_stored_file_ref(ref) for ref in card.file_refs]
     post = frontmatter.Post(card.description, **card.to_frontmatter())
     dest.write_text(frontmatter.dumps(post), encoding="utf-8")
 

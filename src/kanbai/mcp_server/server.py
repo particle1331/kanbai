@@ -135,6 +135,7 @@ def create_card(
     tags: list[str] | None = None,
     priority: str = "medium",
     due_date: str | None = None,
+    file_refs: list[str] | None = None,
 ) -> dict:
     """Create a new card on the Kanban board.
 
@@ -142,13 +143,15 @@ def create_card(
     epic is required and must already exist — call list_epics to see available
     epics. An unknown or archived epic returns {"error": "..."}.
     due_date is an optional YYYY-MM-DD deadline.
+    file_refs is an optional list of project-root-relative file references.
+    Kanbai resolves them and stores absolute paths internally.
 
     Tags: always include one type tag — 'bugfix', 'feature', or 'enhancement' —
     plus 1-2 additional tags derived from the title, description, and epic.
     """
     from kanbai.board.operations import EpicNotFoundError, EpicArchivedError
     try:
-        card = operations.create_card(title, lane, description, tags, priority, epic=epic, due_date=due_date)
+        card = operations.create_card(title, lane, description, tags, priority, epic=epic, due_date=due_date, file_refs=file_refs)
     except EpicNotFoundError as exc:
         available = ", ".join(_epics.list_epics()) or "(none yet)"
         return {"error": str(exc), "available_epics": available}
@@ -218,12 +221,15 @@ def update_card(
     set_epic: bool = False,
     due_date: str | None = None,
     set_due_date: bool = False,
+    file_refs: list[str] | None = None,
+    set_file_refs: bool = False,
 ) -> dict | None:
-    """Update card fields. Only provided fields are changed. To set epic, pass set_epic=True and the desired epic value (or None for Unassigned). To set the deadline, pass set_due_date=True and due_date as YYYY-MM-DD (or None to clear)."""
+    """Update card fields. Only provided fields are changed. To set epic, pass set_epic=True and the desired epic value (or None for Unassigned). To set the deadline, pass set_due_date=True and due_date as YYYY-MM-DD (or None to clear). To replace file refs, pass set_file_refs=True and file_refs as a full list of project-root-relative refs (or None to clear). Kanbai resolves them and stores absolute paths internally."""
     from kanbai.board.models import _UNSET
     epic_arg = epic if set_epic else _UNSET
     due_arg = due_date if set_due_date else _UNSET
-    card = operations.update_card(card_id, title, description, tags, priority, epic=epic_arg, due_date=due_arg)
+    file_refs_arg = file_refs if set_file_refs else _UNSET
+    card = operations.update_card(card_id, title, description, tags, priority, epic=epic_arg, due_date=due_arg, file_refs=file_refs_arg)
     if not card:
         return None
     _notify_board_changed()
@@ -439,7 +445,7 @@ def get_checklist(card_id: str) -> list[dict] | dict:
 
 @tool("read")
 def get_file_refs(card_id: str) -> dict:
-    """Return all file references for a card with their raw path strings."""
+    """Return all file references for a card with their stored absolute path strings."""
     card = operations.get_card(card_id)
     if card is None:
         return {"error": f"Card '{card_id}' not found."}
@@ -448,7 +454,12 @@ def get_file_refs(card_id: str) -> dict:
 
 @tool("write")
 def add_file_ref(card_id: str, path: str) -> dict:
-    """Attach a file reference to a card. Use a relative path with optional line range suffix, e.g. 'src/foo.py:10-30'."""
+    """Attach a file reference to a card.
+
+    Use a path relative to the project root with optional line range suffix,
+    e.g. 'src/foo.py:10-30'. Kanbai resolves it and stores the absolute path
+    internally.
+    """
     try:
         err = operations.add_file_ref(card_id, path)
     except Exception as ex:
@@ -462,7 +473,11 @@ def add_file_ref(card_id: str, path: str) -> dict:
 
 @tool("write")
 def remove_file_ref(card_id: str, path: str) -> dict:
-    """Remove a file reference from a card by its exact raw path string."""
+    """Remove a file reference from a card by its input path string.
+
+    The input may be the project-root-relative form used at creation time or
+    the stored absolute form.
+    """
     err = operations.remove_file_ref(card_id, path)
     if err:
         return {"error": err}
@@ -524,6 +539,18 @@ def get_board_summary(epic: str | None = None) -> dict:
         "completion_heatmap_this_year": _sc.done_cards_heatmap(datetime.date.today().year, epic=epic),
         "_metric_definitions": _sc.METRIC_DEFINITIONS,
     }
+
+
+@tool("read")
+def get_project_root() -> dict:
+    """Return the absolute filesystem path of the target project repository root.
+
+    Use this to resolve project-root-relative file_refs such as 'README.md'.
+    """
+    from kanbai.board import settings as _s
+    from kanbai.paths import PROJECT_ROOT
+    root = _s.project_root() or str(PROJECT_ROOT)
+    return {"root": root}
 
 
 _DOCS_DIR = Path(__file__).parent.parent / "docs"
