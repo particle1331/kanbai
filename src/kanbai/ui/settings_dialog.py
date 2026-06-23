@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+from typing import Any, cast
 
 import flet as ft
 
@@ -94,13 +95,18 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
 
     # ------------------------------------------------------------------ AI
     current_effort = settings.reasoning_effort()
-    effort_pills: dict[ReasoningEffort, ft.Container] = {}
+    effort_pills: dict[ReasoningEffort, tuple[ft.Container, Any]] = {}
 
     def _make_effort_pill(effort: ReasoningEffort) -> ft.Container:
         active = effort == current_effort
-        return ft.Container(
-            content=ft.Text(effort.label, size=11, weight=ft.FontWeight.W_500,
-                            color="#58A6FF" if active else _TEXT_SECONDARY),
+        label: Any = ft.Text(
+            effort.label,
+            size=11,
+            weight=ft.FontWeight.W_500,
+            color="#58A6FF" if active else _TEXT_SECONDARY,
+        )
+        pill = ft.Container(
+            content=label,
             height=28,
             padding=ft.Padding(10, 0, 10, 0),
             alignment=ft.Alignment.CENTER,
@@ -114,17 +120,19 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
             on_click=lambda e, ef=effort: _set_effort(ef),
             tooltip=effort.tooltip,
         )
+        effort_pills[effort] = (pill, label)
+        return pill
 
     def _set_effort(effort: ReasoningEffort) -> None:
         settings.set_reasoning_effort(effort)
-        for ef, pill in effort_pills.items():
+        for ef, (pill, label) in effort_pills.items():
             active = ef == effort
             pill.bgcolor = "#1C3A5C" if active else None
-            pill.content.color = "#58A6FF" if active else _TEXT_SECONDARY
+            label.color = "#58A6FF" if active else _TEXT_SECONDARY
         page.update()
 
     for ef in ReasoningEffort:
-        effort_pills[ef] = _make_effort_pill(ef)
+        _make_effort_pill(ef)
 
     effort_row = ft.Row(
         [
@@ -135,7 +143,7 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
                 ],
                 spacing=2, tight=True, expand=True,
             ),
-            ft.Row(list(effort_pills.values()), spacing=4, tight=True),
+            ft.Row([pill for pill, _label in effort_pills.values()], spacing=4, tight=True),
         ],
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -143,6 +151,11 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
 
     _default_tokens = str(settings.max_completion_tokens())
     _token_strs = [str(v) for v in MAX_COMPLETION_TOKEN_OPTIONS]
+    def _set_max_completion_tokens(e) -> None:
+        value = e.control.value
+        if value is not None:
+            settings.set_max_completion_tokens(int(value))
+
     tokens_dd = ft.Dropdown(
         value=_default_tokens if _default_tokens in _token_strs else str(MAX_COMPLETION_TOKEN_OPTIONS[2]),
         options=[ft.dropdown.Option(str(v), str(v)) for v in MAX_COMPLETION_TOKEN_OPTIONS],
@@ -150,7 +163,7 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
         dense=True,
         text_style=ft.TextStyle(size=12),
         content_padding=ft.Padding(8, 4, 0, 4),
-        on_select=lambda e: settings.set_max_completion_tokens(int(e.control.value)),
+        on_select=_set_max_completion_tokens,
     )
     tokens_row = ft.Row(
         [
@@ -169,6 +182,11 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
 
     _default_steps = str(settings.max_agent_steps())
     _step_strs = [str(v) for v in MAX_AGENT_STEP_OPTIONS]
+    def _set_max_agent_steps(e) -> None:
+        value = e.control.value
+        if value is not None:
+            settings.set_max_agent_steps(int(value))
+
     steps_dd = ft.Dropdown(
         value=_default_steps if _default_steps in _step_strs else str(MAX_AGENT_STEP_OPTIONS[1]),
         options=[ft.dropdown.Option(str(v), str(v)) for v in MAX_AGENT_STEP_OPTIONS],
@@ -176,7 +194,7 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
         dense=True,
         text_style=ft.TextStyle(size=12),
         content_padding=ft.Padding(8, 4, 0, 4),
-        on_select=lambda e: settings.set_max_agent_steps(int(e.control.value)),
+        on_select=_set_max_agent_steps,
     )
     steps_row = ft.Row(
         [
@@ -198,6 +216,9 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
         "On" if settings.stream_response() else "Off",
         size=11, color=_TEXT_SECONDARY,
     )
+
+    def _set_text_color(text: ft.Text, active: bool) -> None:
+        text.color = "#58A6FF" if active else _TEXT_SECONDARY
 
     def _on_stream_toggle(_e) -> None:
         settings.set_stream_response(not settings.stream_response())
@@ -240,6 +261,52 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
+    _auto_log_label = ft.Text(
+        "On" if settings.auto_work_log() else "Off",
+        size=11, color=_TEXT_SECONDARY,
+    )
+
+    def _on_auto_log_toggle(_e) -> None:
+        settings.set_auto_work_log(not settings.auto_work_log())
+        _auto_log_label.value = "On" if settings.auto_work_log() else "Off"
+        page.update()
+
+    auto_log_chip = ft.Container(
+        content=ft.Row(
+            [
+                ft.Icon(ft.Icons.ARTICLE_OUTLINED, size=13, color=_TEXT_SECONDARY),
+                _auto_log_label,
+            ],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor="#21262D",
+        border=ft.Border(
+            ft.BorderSide(1, _BORDER), ft.BorderSide(1, _BORDER),
+            ft.BorderSide(1, _BORDER), ft.BorderSide(1, _BORDER),
+        ),
+        border_radius=6,
+        padding=ft.Padding(8, 4, 8, 4),
+        on_click=_on_auto_log_toggle,
+        ink=True,
+        tooltip="Toggle automatic audit comments when cards change.",
+    )
+
+    auto_log_row = ft.Row(
+        [
+            ft.Column(
+                [
+                    ft.Text("Auto work log", size=13, weight=ft.FontWeight.W_600, color=_TEXT_PRIMARY),
+                    ft.Text("Automatically records system activity on cards", size=11, color=_TEXT_SECONDARY),
+                ],
+                spacing=2, tight=True, expand=True,
+            ),
+            auto_log_chip,
+        ],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
     # ------------------------------------------------------------------ Storage
     from kanbai.board import operations as _ops
     from kanbai.board import validation as _val
@@ -270,9 +337,10 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
     _cleanup_result = ft.Text("", size=11, color=_TEXT_SECONDARY)
 
     def _make_pill(label: str, color: str, bgcolor: str | None = None,
-                   border_color: str = _BORDER) -> ft.Container:
-        return ft.Container(
-            content=ft.Text(label, size=11, weight=ft.FontWeight.W_500, color=color),
+                   border_color: str = _BORDER) -> tuple[ft.Container, Any]:
+        text: Any = ft.Text(label, size=11, weight=ft.FontWeight.W_500, color=color)
+        pill = ft.Container(
+            content=text,
             height=28,
             padding=ft.Padding(10, 0, 10, 0),
             alignment=ft.Alignment.CENTER,
@@ -284,15 +352,16 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
             ),
             ink=True,
         )
+        return pill, text
 
-    _cleanup_dryrun_pill = _make_pill("Dry run", _TEXT_SECONDARY)
-    _cleanup_run_pill    = _make_pill("Run cleanup", "#F85149", bgcolor="#2A0A08",
+    _cleanup_dryrun_pill, _cleanup_dryrun_label = _make_pill("Dry run", _TEXT_SECONDARY)
+    _cleanup_run_pill, _cleanup_run_label = _make_pill("Run cleanup", "#F85149", bgcolor="#2A0A08",
                                       border_color="#5A2020")
     _cleanup_run_pill.visible = False
 
     def _on_dry_run(_e) -> None:
         _cleanup_dryrun_pill.ink = False
-        _cleanup_dryrun_pill.content.color = "#4A5568"
+        cast(Any, _cleanup_dryrun_label).color = "#4A5568"
         _cleanup_result.value = "Scanning…"
         _cleanup_result.color = _TEXT_SECONDARY
         _cleanup_run_pill.visible = False
@@ -310,14 +379,14 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
                 )
                 _cleanup_run_pill.visible = True
             _cleanup_dryrun_pill.ink = True
-            _cleanup_dryrun_pill.content.color = _TEXT_SECONDARY
+            cast(Any, _cleanup_dryrun_label).color = _TEXT_SECONDARY
             page.update()
 
         threading.Thread(target=_do, daemon=True).start()
 
     def _on_run_cleanup(_e) -> None:
         _cleanup_run_pill.ink = False
-        _cleanup_run_pill.content.color = "#7A3030"
+        cast(Any, _cleanup_run_label).color = "#7A3030"
         _cleanup_result.value = "Cleaning up…"
         _cleanup_result.color = _TEXT_SECONDARY
         page.update()
@@ -326,7 +395,7 @@ def open_settings_dialog(page: ft.Page, on_change=None) -> None:
             result = _ops.cleanup_attachments(dry_run=False)
             _cleanup_run_pill.visible = False
             _cleanup_run_pill.ink = True
-            _cleanup_run_pill.content.color = "#F85149"
+            cast(Any, _cleanup_run_label).color = "#F85149"
             _cleanup_result.value = (
                 f"✓ Freed {result['size_mb']} MB \u00b7 {result['files']} file(s) removed"
             )

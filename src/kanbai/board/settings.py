@@ -107,6 +107,8 @@ _DEFAULTS: dict = {
     # and intentionally not persisted, so risky modes like YOLO never stick
     # across restarts.
     "chat_mode": "agent",  # "ask" | "agent" | "plan" | "yolo"
+    # Whether the board should auto-append system audit comments when cards change.
+    "auto_work_log": True,
     # Max model turns (each may issue tool calls) before control returns to the user.
     "max_agent_steps": 8,
     # Cumulative token usage per model handle.
@@ -205,6 +207,16 @@ def stream_response() -> bool:
 
 def set_stream_response(value: bool) -> None:
     _load()["stream_response"] = bool(value)
+    _save()
+
+
+def auto_work_log() -> bool:
+    """Whether system audit comments are auto-generated for card changes."""
+    return bool(_load().get("auto_work_log", True))
+
+
+def set_auto_work_log(value: bool) -> None:
+    _load()["auto_work_log"] = bool(value)
     _save()
 
 

@@ -31,7 +31,7 @@ MAX_CHECKLIST_ITEMS = 100
 MAX_CHECKLIST_TEXT = 500
 MAX_FILE_REFS = 50
 MAX_FILE_REF_LEN = 300
-VALID_COMMENT_ROLES = frozenset(["note", "instruction", "update", "decision", "blocker", "question"])
+VALID_COMMENT_ROLES = frozenset(["note", "instruction", "update", "decision", "blocker", "question", "system"])
 BLOCKED_EXTENSIONS = {
     ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".wsf",
     ".sh", ".bash", ".zsh",

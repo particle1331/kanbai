@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
@@ -21,6 +22,7 @@ from kanbai.board import validation as _validation
 from kanbai.board.models import Card, LANE_LABELS, LANES
 from kanbai.board.settings import DEFAULT_TAGS
 from kanbai.board.storage import sqlite_cache as _sc
+from kanbai import paths
 from kanbai.ui import avatar_color
 from kanbai.ui import theme
 
@@ -201,6 +203,34 @@ def _chip_input(
 
 def _parse_file_refs(raw: str | None) -> list[str]:
     return [line.strip() for line in (raw or "").splitlines() if line.strip()]
+
+
+def _load_ui_state() -> dict:
+    try:
+        return json.loads(paths.UI_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_ui_state(state: dict) -> None:
+    try:
+        paths.UI_STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _system_activity_key(card_id: str) -> str:
+    return f"card_dialog.show_system_activity.{card_id}"
+
+
+def _fmt_date(iso: str) -> str:
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
+        return dt.strftime("%b %d, %Y · %H:%M")
+    except (ValueError, AttributeError):
+        return iso
 
 
 def open_create_dialog(page: ft.Page, default_lane: str, on_created, default_epic: str | None = None) -> None:
@@ -683,6 +713,7 @@ def open_edit_dialog(
         "decision": "#56D364",
         "blocker": "#F85149",
         "question": "#DB8132",
+        "system": "#7D8590",
     }
 
     def _fmt_ts_parts(iso: str) -> str:
@@ -695,81 +726,97 @@ def open_edit_dialog(
         except (ValueError, AttributeError):
             return iso
 
-    def _fmt_date(iso: str) -> str:
-        if not iso:
-            return "—"
-        try:
-            dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
-            return dt.strftime("%b %d, %Y \u00b7 %H:%M")
-        except (ValueError, AttributeError):
-            return iso
+    _show_system_activity = [
+        _load_ui_state().get(_system_activity_key(card_id), True)
+    ]
+
+    def _set_system_activity_visible(value: bool) -> None:
+        _show_system_activity[0] = value
+        state = _load_ui_state()
+        state[_system_activity_key(card_id)] = value
+        _save_ui_state(state)
+
+    def _render_comment(cm: dict) -> ft.Control:
+        role = cm.get("role") or "note"
+        role_color = _ROLE_COLORS.get(role, "#6E7681")
+        ts_str = _fmt_ts_parts(cm.get("created_at", ""))
+        text = cm.get("text", "")
+        is_system = role == "system"
+
+        def _del(e, cid=cm.get("id")) -> None:
+            nonlocal card
+            def _do() -> None:
+                nonlocal card
+                if cid is not None:
+                    operations.delete_comment(card_id, cid)
+                _refreshed = operations.get_card(card_id)
+                if _refreshed is not None:
+                    card = _refreshed
+                _build_comments()
+                page.update()
+            threading.Thread(target=_do, daemon=True).start()
+
+        timestamp_col_controls: list[ft.Control] = [
+            ft.Text(ts_str, size=10, color="#6E7681"),
+        ]
+        if role != "note":
+            timestamp_col_controls.append(
+                ft.Container(
+                    content=ft.Text(
+                        role.upper(),
+                        size=8,
+                        color=role_color,
+                        weight=ft.FontWeight.W_700,
+                    ),
+                    bgcolor="#21262D" if not is_system else "#1F2933",
+                    border_radius=3,
+                    padding=ft.Padding(3, 1, 3, 1),
+                )
+            )
+
+        return ft.Container(
+            content=ft.Row(
+                [
+                    ft.Column(
+                        timestamp_col_controls,
+                        spacing=1,
+                        width=76,
+                    ),
+                    ft.Text(
+                        text,
+                        size=11 if is_system else 12,
+                        color="#8B949E" if is_system else "#C9D1D9",
+                        selectable=True,
+                        expand=True,
+                    ),
+                    ft.IconButton(
+                        ft.Icons.CANCEL, icon_size=12, icon_color="#6E7681",
+                        on_click=_del, tooltip="Delete comment",
+                        padding=ft.Padding(0, 0, 0, 0),
+                    ),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+            bgcolor="#161B22" if not is_system else "#14181F",
+            border_radius=6,
+            padding=ft.Padding(8, 6, 8, 6),
+            border=ft.Border(left=ft.BorderSide(3, role_color)),
+        )
 
     def _build_comments() -> None:
         comments_col.controls.clear()
-        if not card.comments:
+        visible_comments = [
+            cm for cm in sorted(card.comments, key=lambda c: c.get("created_at", ""))
+            if _show_system_activity[0] or (c := cm.get("role")) != "system"
+        ]
+        if not visible_comments:
             comments_col.controls.append(
                 ft.Text("No comments yet.", size=11, color="#6E7681", italic=True)
             )
             return
-        for cm in card.comments:
-            def _del(e, cid=cm.get("id")) -> None:
-                nonlocal card
-                def _do() -> None:
-                    nonlocal card
-                    if cid is not None:
-                        operations.delete_comment(card_id, cid)
-                    _refreshed = operations.get_card(card_id)
-                    if _refreshed is not None:
-                        card = _refreshed
-                    _build_comments()
-                    page.update()
-                threading.Thread(target=_do, daemon=True).start()
-
-            ts_str = _fmt_ts_parts(cm.get("created_at", ""))
-            role = cm.get("role") or "note"
-            role_color = _ROLE_COLORS.get(role, "#6E7681")
-
-            timestamp_col_controls: list[ft.Control] = [
-                ft.Text(ts_str, size=10, color="#6E7681"),
-            ]
-            if role != "note":
-                timestamp_col_controls.append(
-                    ft.Container(
-                        content=ft.Text(role.upper(), size=8, color=role_color, weight=ft.FontWeight.W_700),
-                        bgcolor="#21262D",
-                        border_radius=3,
-                        padding=ft.Padding(3, 1, 3, 1),
-                    )
-                )
-
-            comments_col.controls.append(
-                ft.Container(
-                    content=ft.Row(
-                        [
-                            ft.Column(
-                                timestamp_col_controls,
-                                spacing=1,
-                                width=76,
-                            ),
-                            ft.Text(
-                                cm.get("text", ""), size=12, color="#C9D1D9",
-                                selectable=True, expand=True,
-                            ),
-                            ft.IconButton(
-                                ft.Icons.CANCEL, icon_size=12, icon_color="#6E7681",
-                                on_click=_del, tooltip="Delete comment",
-                                padding=ft.Padding(0, 0, 0, 0),
-                            ),
-                        ],
-                        spacing=8,
-                        vertical_alignment=ft.CrossAxisAlignment.START,
-                    ),
-                    bgcolor="#161B22",
-                    border_radius=6,
-                    padding=ft.Padding(8, 6, 8, 6),
-                    border=ft.Border(left=ft.BorderSide(3, role_color)),
-                )
-            )
+        for cm in visible_comments:
+            comments_col.controls.append(_render_comment(cm))
 
     def _add_comment(e) -> None:
         nonlocal card
@@ -795,7 +842,39 @@ def open_edit_dialog(
 
     def _comments_section(editable: bool) -> ft.Control:
         _build_comments()
-        children: list[ft.Control] = [comments_col]
+
+        def _toggle_system_activity(_e) -> None:
+            _set_system_activity_visible(not _show_system_activity[0])
+            _build_comments()
+            page.update()
+
+        children: list[ft.Control] = [
+            ft.Row(
+                [
+                    ft.Container(expand=True),
+                    ft.Container(
+                        content=ft.Row(
+                            [
+                                ft.Icon(ft.Icons.INFO_OUTLINE, size=12, color="#8B949E"),
+                                ft.Text(
+                                    "System on" if _show_system_activity[0] else "System off",
+                                    size=10,
+                                    color="#8B949E",
+                                ),
+                            ],
+                            spacing=4,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        on_click=_toggle_system_activity,
+                        ink=True,
+                        border_radius=4,
+                        padding=ft.Padding(4, 2, 4, 2),
+                    ),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            comments_col,
+        ]
         if editable:
             children.append(
                 ft.Row(

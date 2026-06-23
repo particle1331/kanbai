@@ -8,6 +8,7 @@ from pathlib import Path
 
 from kanbai.board import counter as _counter
 from kanbai.board import epics as _epics
+from kanbai.board import settings
 from kanbai.board import validation as _validation
 from kanbai.board.models import Card, _UNSET
 from kanbai.board.storage import event_log, markdown_store, sqlite_cache
@@ -70,6 +71,22 @@ def _dedup_exact(values: list[str] | None) -> list[str]:
         seen.add(val)
         out.append(val)
     return out
+
+
+def _short(text: str, limit: int = 40) -> str:
+    value = (text or "").strip().replace("\n", " ")
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1] + "…"
+
+
+def _maybe_add_system_comment(card_id: str, text: str) -> None:
+    if not settings.auto_work_log():
+        return
+    try:
+        add_comment(card_id, text, role="system")
+    except ValueError:
+        pass
 
 
 def create_card(
@@ -187,6 +204,16 @@ def update_card(
                 f"'{_bucket}' already has the maximum of "
                 f"{_validation.MAX_CARDS_PER_EPIC} active cards."
             )
+
+    old_title = card.title
+    old_description = card.description
+    old_tags = list(card.tags)
+    old_priority = card.priority
+    old_epic = card.epic
+    old_assigned = list(card.assigned_to)
+    old_due_date = card.due_date
+    old_file_refs = list(card.file_refs)
+
     if title is not None:
         card.title = title
     if description is not None:
@@ -206,9 +233,62 @@ def update_card(
             _validation.normalize_file_ref(ref)
             for ref in _dedup_exact(file_refs)
         ]  # type: ignore[assignment]
+
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+
+    if title is not None and card.title != old_title:
+        _maybe_add_system_comment(card.id, f'Title: "{_short(old_title)}" → "{_short(card.title)}"')
+    if description is not None and card.description != old_description:
+        _maybe_add_system_comment(card.id, "Description updated")
+    if priority is not None and card.priority != old_priority:
+        _maybe_add_system_comment(card.id, f"Priority: {old_priority} → {card.priority}")
+    if not isinstance(epic, _UnsetT) and (card.epic or None) != (old_epic or None):
+        if old_epic and card.epic:
+            epic_msg = f"Epic: {old_epic} → {card.epic}"
+        elif card.epic:
+            epic_msg = f"Epic: +{card.epic}"
+        elif old_epic:
+            epic_msg = f"Epic: -{old_epic}"
+        else:
+            epic_msg = "Epic cleared"
+        _maybe_add_system_comment(card.id, epic_msg)
+    if assigned_to is not None and card.assigned_to != old_assigned:
+        old_set = set(old_assigned)
+        new_set = set(card.assigned_to)
+        for name in card.assigned_to:
+            if name not in old_set:
+                _maybe_add_system_comment(card.id, f"Assignee +{name}")
+        for name in old_assigned:
+            if name not in new_set:
+                _maybe_add_system_comment(card.id, f"Assignee -{name}")
+    if tags is not None and card.tags != old_tags:
+        old_set = set(old_tags)
+        new_set = set(card.tags)
+        for tag in card.tags:
+            if tag not in old_set:
+                _maybe_add_system_comment(card.id, f"Tag +{tag}")
+        for tag in old_tags:
+            if tag not in new_set:
+                _maybe_add_system_comment(card.id, f"Tag -{tag}")
+    if not isinstance(due_date, _UnsetT) and card.due_date != old_due_date:
+        if old_due_date and card.due_date:
+            _maybe_add_system_comment(card.id, f"Due date: {old_due_date} → {card.due_date}")
+        elif card.due_date:
+            _maybe_add_system_comment(card.id, f"Due date: +{card.due_date}")
+        elif old_due_date:
+            _maybe_add_system_comment(card.id, "Due date cleared")
+    if not isinstance(file_refs, _UnsetT) and card.file_refs != old_file_refs:
+        old_set = set(old_file_refs)
+        new_set = set(card.file_refs)
+        for ref in card.file_refs:
+            if ref not in old_set:
+                _maybe_add_system_comment(card.id, f"File +{_validation.display_file_ref(ref)}")
+        for ref in old_file_refs:
+            if ref not in new_set:
+                _maybe_add_system_comment(card.id, f"File -{_validation.display_file_ref(ref)}")
+
     return card
 
 
@@ -276,10 +356,13 @@ def toggle_checklist_item(card_id: str, index: int) -> Card | None:
         return None
     if index < 0 or index >= len(card.checklist):
         return None
-    card.checklist[index]["done"] = not card.checklist[index].get("done", False)
+    item = card.checklist[index]
+    item["done"] = not item.get("done", False)
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    prefix = "Checklist done" if item.get("done", False) else "Checklist reopened"
+    _maybe_add_system_comment(card.id, f"{prefix}: {item.get('text', '')}")
     return card
 
 
@@ -307,6 +390,7 @@ def move_card(card_id: str, target_lane: str) -> Card | None:
     markdown_store.move_card_file(card, old_lane)
     sqlite_cache.upsert_card(card)
     event_log.record_transition(card.id, old_lane, target_lane, at=card.updated_at)
+    _maybe_add_system_comment(card.id, f"Moved: {old_lane} → {target_lane}")
     return card
 
 
@@ -348,6 +432,7 @@ def archive_card(card_id: str) -> Card | None:
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    _maybe_add_system_comment(card.id, "Archived")
     return card
 
 
@@ -369,6 +454,7 @@ def unarchive_card(card_id: str) -> Card | None:
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    _maybe_add_system_comment(card.id, "Restored")
     return card
 
 
@@ -385,6 +471,8 @@ def archive_epic_op(epic_name: str) -> int:
             sqlite_cache.upsert_card(card)
             archived_ids.append(card.id)
     _epics.archive_epic(epic_name, archived_ids)
+    for card_id in archived_ids:
+        _maybe_add_system_comment(card_id, "Archived")
     return len(archived_ids)
 
 
@@ -399,6 +487,7 @@ def unarchive_epic_op(epic_name: str) -> int:
             card.updated_at = _now()
             markdown_store.write_card(card)
             sqlite_cache.upsert_card(card)
+            _maybe_add_system_comment(card.id, "Restored")
             count += 1
     return count
 
@@ -464,6 +553,8 @@ def link_cards(from_number: int, to_number: int, link_type: str) -> str | None:
     sqlite_cache.upsert_card(from_card)
     markdown_store.write_card(to_card)
     sqlite_cache.upsert_card(to_card)
+    _maybe_add_system_comment(from_card.id, f"Link +#{to_number} ({link_type})")
+    _maybe_add_system_comment(to_card.id, f"Link +#{from_number} ({inverse})")
     return None
 
 
@@ -499,6 +590,8 @@ def unlink_cards(from_number: int, to_number: int, link_type: str) -> str | None
     sqlite_cache.upsert_card(from_card)
     markdown_store.write_card(to_card)
     sqlite_cache.upsert_card(to_card)
+    _maybe_add_system_comment(from_card.id, f"Link -#{to_number} ({link_type})")
+    _maybe_add_system_comment(to_card.id, f"Link -#{from_number} ({inverse})")
     return None
 
 
@@ -692,6 +785,7 @@ def add_file_ref(card_id: str, path: str) -> str | None:
     card.updated_at = _now()
     markdown_store.write_card(card)
     sqlite_cache.upsert_card(card)
+    _maybe_add_system_comment(card.id, f"File +{_validation.display_file_ref(stored)}")
     return None
 
 
@@ -717,6 +811,7 @@ def remove_file_ref(card_id: str, path: str) -> str | None:
             card.updated_at = _now()
             markdown_store.write_card(card)
             sqlite_cache.upsert_card(card)
+            _maybe_add_system_comment(card.id, f"File -{_validation.display_file_ref(candidate)}")
             return None
     return f"File reference '{path}' not found on card."
 
