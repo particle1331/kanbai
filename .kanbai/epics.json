@@ -16,5 +16,11 @@
     "archived_card_ids": [],
     "description": "THIS BOARD IS FOR TESTING KANBAI.",
     "comments": []
+  },
+  "testet2": {
+    "archived": true,
+    "archived_card_ids": [],
+    "description": "",
+    "comments": []
   }
 }
