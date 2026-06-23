@@ -734,7 +734,7 @@ def open_edit_dialog(
             return iso
 
     _show_system_activity = [
-        _load_ui_state().get(_system_activity_key(card_id), True)
+        _load_ui_state().get(_system_activity_key(card_id), False)
     ]
 
     def _set_system_activity_visible(value: bool) -> None:
