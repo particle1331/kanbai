@@ -5,11 +5,12 @@
   "max_completion_tokens": 2048,
   "stream_response": true,
   "chat_mode": "yolo",
+  "auto_work_log": true,
   "max_agent_steps": 8,
   "token_usage": {
     "nano": {
-      "prompt_tokens": 421489,
-      "completion_tokens": 6061
+      "prompt_tokens": 442943,
+      "completion_tokens": 6339
     },
     "mini": {
       "prompt_tokens": 17242,

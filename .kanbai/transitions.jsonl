@@ -133,3 +133,5 @@
 {"card_id": "a87fcbe7-e68f-424a-8e9c-bf40eaf8581f", "from": "review", "to": "done", "at": "2026-06-23T00:06:32.273083+00:00"}
 {"card_id": "2ff67822-39c5-43a9-9da6-9c47542650ac", "from": null, "to": "backlog", "at": "2026-06-23T00:09:04.751079+00:00"}
 {"card_id": "3756e16b-3f31-4d13-88bd-cbc483625554", "from": "in_progress", "to": "review", "at": "2026-06-23T15:04:54.124249+00:00"}
+{"card_id": "3756e16b-3f31-4d13-88bd-cbc483625554", "from": "review", "to": "done", "at": "2026-06-23T15:19:54.990723+00:00"}
+{"card_id": "a28ef6e1-4473-410e-a1bf-3e3b8fe6beb7", "from": "backlog", "to": "review", "at": "2026-06-23T15:57:52.449218+00:00"}
