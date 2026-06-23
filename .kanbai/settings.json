@@ -9,8 +9,8 @@
   "max_agent_steps": 8,
   "token_usage": {
     "nano": {
-      "prompt_tokens": 472486,
-      "completion_tokens": 7061
+      "prompt_tokens": 477781,
+      "completion_tokens": 7290
     },
     "mini": {
       "prompt_tokens": 17242,
