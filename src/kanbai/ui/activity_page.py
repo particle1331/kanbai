@@ -187,7 +187,6 @@ class ActivityPage:
         assert from_field is not None and to_field is not None
         row1 = ft.Row(
             [
-                search_field,
                 type_dd,
                 epic_dd,
             ],
@@ -198,6 +197,7 @@ class ActivityPage:
             [
                 from_picker,
                 to_picker,
+                search_field,
             ],
             spacing=22,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,

@@ -92,6 +92,7 @@ cannot reach them.
 |------|-------------|
 | `list_cards` | List/filter cards by lane, tags, archived, text query, or epic |
 | `get_card` | Full details of one card by ID |
+| `get_card_context` | Bundled card + comments + links + epic + recent activity |
 | `list_epics` | Epic names (optionally including archived) |
 | `get_epic` | Epic detail: description, comments, archived status |
 | `get_board_summary` | Aggregated analytics: lane counts, completion %, CFD, heatmap |
@@ -104,8 +105,9 @@ cannot reach them.
 
 | Tool | Description |
 |------|-------------|
-| `create_card` | Create a card (with optional epic, due date, tags, file refs) |
-| `update_card` | Update fields (title, desc, tags, priority, epic, due date, file refs) |
+| `create_card` | Create a card with epic, due date, tags, file refs |
+| `discover_work` | Create/link/comment on discovered work |
+| `update_card` | Update title, desc, tags, priority, epic, due date, file refs |
 | `move_card` | Move a card to another lane |
 | `archive_card` / `unarchive_card` | Soft-delete / restore |
 | `set_card_epic` | Assign epic by card number |
@@ -113,7 +115,7 @@ cannot reach them.
 | `set_epic_description` | Set/replace epic description |
 | `add_epic_comment` / `delete_epic_comment` | Epic comments |
 | `add_card_comment` / `delete_card_comment` | Card comments |
-| `add_file_ref` / `remove_file_ref` | Attach or detach file refs (input relative, stored absolute) |
+| `add_file_ref` / `remove_file_ref` | Attach or detach file refs |
 | `link_cards` / `unlink_cards` | Typed relationships (auto-inverse) |
 
 ### Yolo tier
@@ -126,7 +128,7 @@ cannot reach them.
 
 ## How a Call Flows
 
-```
+```text
 Agent → MCP server (stdio) → operations.py → Markdown store + SQLite cache
                                                       ↓
                                             .kanbai/ files updated

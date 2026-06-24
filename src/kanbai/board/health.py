@@ -1,13 +1,13 @@
 """board/health.py — signal-based project health computation.
 
-Project health is derived from the 8 A-series stat cards shown on the
+Project health is derived from the A-series stat cards shown on the
 analytics Health page. Every signal maps to one of three bands:
 
   "good"  – within healthy thresholds (green)
   "watch" – approaching a threshold; worth monitoring (amber)
   "bad"   – threshold exceeded; needs attention (red)
 
-The overall health verdict is the worst band across all 8 signals.
+The overall health verdict is the worst band across all signals.
 
 Public API
 ----------
@@ -26,6 +26,11 @@ from kanbai.board import settings
 from kanbai.board.storage import sqlite_cache
 
 
+_DISCOVERY_TRIAGE_WATCH_DAYS = 5
+_DISCOVERY_TRIAGE_WATCH_COUNT = 1
+_DISCOVERY_TRIAGE_BAD_COUNT = 3
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -37,6 +42,18 @@ def _due_band(due_3d: int, due_1d: int) -> str:
     if due_3d >= settings.HEALTH_DUE_WATCH:
         return "watch"
     return "good"
+
+
+def _parse_iso(iso: str | None) -> dt.datetime | None:
+    if not iso:
+        return None
+    try:
+        ts = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=dt.timezone.utc)
+    return ts
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +226,34 @@ def compute_signals(epic: str | None = None) -> list[dict]:
             f"{due_3d} card{'s' if due_3d != 1 else ''} due within {settings.DEADLINE_SOON_DAYS}d"
             f"{f' ({due_1d} due within {settings.DEADLINE_URGENT_DAYS}d)' if due_1d else ''}"
             if due_3d else "No upcoming deadlines"
+        ),
+    })
+
+    # ── A9: Untriaged discoveries ────────────────────────────────────────────
+    cutoff = now - dt.timedelta(days=_DISCOVERY_TRIAGE_WATCH_DAYS)
+    discovered_cards = [
+        card for card in sqlite_cache.query_cards(lane="backlog", archived=False, epic=epic)
+        if "discovered" in (card.get("tags") or "").split(",")
+    ]
+    untriaged = [card for card in discovered_cards if (_parse_iso(card.get("created_at")) or now) <= cutoff]
+    triage_count = len(untriaged)
+
+    if triage_count >= _DISCOVERY_TRIAGE_BAD_COUNT:
+        triage_band = "bad"
+    elif triage_count >= _DISCOVERY_TRIAGE_WATCH_COUNT:
+        triage_band = "watch"
+    else:
+        triage_band = "good"
+
+    signals.append({
+        "key": "untriaged_discoveries",
+        "label": "Untriaged Discoveries",
+        "value": triage_count,
+        "unit": "cards",
+        "band": triage_band,
+        "message": (
+            f"{triage_count} discovered card{'s' if triage_count != 1 else ''} sitting in backlog for >{_DISCOVERY_TRIAGE_WATCH_DAYS}d"
+            if triage_count else "No stale discoveries"
         ),
     })
 

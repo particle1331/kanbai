@@ -446,10 +446,24 @@ def reorder_cards(target_lane: str, ordered_ids: list[str]) -> None:
             markdown_store.move_card_file(card, old_lane)
             sqlite_cache.upsert_card(card)
             event_log.record_transition(card.id, old_lane, target_lane, at=card.updated_at)
+            activity_log.record_event(
+                "card_reordered",
+                card=card,
+                from_lane=old_lane,
+                to_lane=target_lane,
+                position=new_pos,
+            )
         else:
             card.position = new_pos
+            card.updated_at = _now()
             markdown_store.write_card(card)
             sqlite_cache.upsert_card(card)
+            activity_log.record_event(
+                "card_reordered",
+                card=card,
+                lane=target_lane,
+                position=new_pos,
+            )
 
 
 def archive_card(card_id: str) -> Card | None:

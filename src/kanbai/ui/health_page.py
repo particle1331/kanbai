@@ -5,13 +5,14 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import io
+from typing import Any
 
 # matplotlib is lazy-imported to speed up app startup
 _mpl_loaded = False
-mdates = None
-mpatches = None
-plt = None
-mticker = None
+mdates: Any = None
+mpatches: Any = None
+plt: Any = None
+mticker: Any = None
 
 def _ensure_matplotlib():
     global _mpl_loaded, mdates, mpatches, plt, mticker
@@ -1314,14 +1315,15 @@ class HealthPage:
         )
 
     def _kpi_card(
-        self, icon: str | ft.IconData, label: str, value_str: str, sub: str, band: str
+        self, icon: ft.IconData, label: str, value_str: str, sub: str, band: str
     ) -> ft.Container:
         value_color = _BAND_COLOR.get(band, _TEXT)
+        label_row_controls: list[ft.Control] = [
+            ft.Icon(icon, size=12, color=_TEXT_MUT),
+            ft.Text(label.upper(), size=10, weight=ft.FontWeight.W_600, color=_TEXT_MUT),
+        ]
         label_row = ft.Row(
-            [
-                ft.Icon(icon, size=12, color=_TEXT_MUT),
-                ft.Text(label.upper(), size=10, weight=ft.FontWeight.W_600, color=_TEXT_MUT),
-            ],
+            label_row_controls,
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             tight=True,
@@ -1947,13 +1949,45 @@ class HealthPage:
                     label="Pull rate (7d)")
             ax.fill_between(dates, vals, alpha=0.08, color=_TEAL)
             ax.axhline(y=1.0, color=_TEXT_MUT, linestyle="--", linewidth=1,
-                       alpha=0.7, label="Balanced (1.0)")
-            ax.axhline(y=settings.HEALTH_PULL_RATE_WATCH, color=_AMBER, linestyle="--",
-                       linewidth=1, alpha=0.7,
-                       label=f"Watch (< {settings.HEALTH_PULL_RATE_WATCH})")
-            ax.axhline(y=settings.HEALTH_PULL_RATE_BAD, color=_RED, linestyle="--",
-                       linewidth=1, alpha=0.7,
-                       label=f"Bad (< {settings.HEALTH_PULL_RATE_BAD})")
+                       alpha=0.7, label="_nolegend_")
+            ax.axhline(y=settings.HEALTH_PULL_RATE_WATCH, color=_AMBER,
+                       linestyle="--", linewidth=1, alpha=0.7,
+                       label="_nolegend_")
+            ax.axhline(y=settings.HEALTH_PULL_RATE_BAD, color=_RED,
+                       linestyle="--", linewidth=1, alpha=0.7,
+                       label="_nolegend_")
+
+            # On-plot annotations for threshold/target lines
+            x_end = dates[-1]
+            _BG_BBOX = dict(boxstyle="round,pad=0.2", fc=_MPL_BG,
+                            ec="none", alpha=0.35)
+            ax.annotate(
+                "Balanced (1.0)",
+                xy=(x_end, 1.0),
+                xytext=(6, 0), textcoords="offset points",
+                va="center", ha="left",
+                fontsize=7, color=_TEXT_MUT,
+                bbox=_BG_BBOX,
+                clip_on=False,
+            )
+            ax.annotate(
+                f"Watch (< {settings.HEALTH_PULL_RATE_WATCH:.2f})",
+                xy=(x_end, settings.HEALTH_PULL_RATE_WATCH),
+                xytext=(6, 0), textcoords="offset points",
+                va="center", ha="left",
+                fontsize=7, color=_AMBER,
+                bbox=_BG_BBOX,
+                clip_on=False,
+            )
+            ax.annotate(
+                f"Bad (< {settings.HEALTH_PULL_RATE_BAD:.2f})",
+                xy=(x_end, settings.HEALTH_PULL_RATE_BAD),
+                xytext=(6, 0), textcoords="offset points",
+                va="center", ha="left",
+                fontsize=7, color=_RED,
+                bbox=_BG_BBOX,
+                clip_on=False,
+            )
 
             ax.set_ylabel("started ÷ created", fontsize=8, color=_TEXT_MUT)
             ax.tick_params(axis="y", labelsize=8, colors=_TEXT_MUT)
@@ -2478,10 +2512,33 @@ class HealthPage:
             # A6 threshold lines
             ax.axhline(y=settings.HEALTH_BACKLOG_AGE_WATCH_DAYS, color=_AMBER,
                        linestyle="--", linewidth=1, alpha=0.6,
-                       label=f"Watch (> {settings.HEALTH_BACKLOG_AGE_WATCH_DAYS:.0f}d)")
+                       label="_nolegend_")
             ax.axhline(y=settings.HEALTH_BACKLOG_AGE_BAD_DAYS, color=_RED,
                        linestyle="--", linewidth=1, alpha=0.6,
-                       label=f"Bad (> {settings.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f}d)")
+                       label="_nolegend_")
+
+            # On-plot annotations (no legend reliance)
+            x_end = dates[-1]
+            _BG_BBOX = dict(boxstyle="round,pad=0.2", fc=_MPL_BG,
+                            ec="none", alpha=0.35)
+            ax.annotate(
+                f"Watch > {settings.HEALTH_BACKLOG_AGE_WATCH_DAYS:.0f}d",
+                xy=(x_end, settings.HEALTH_BACKLOG_AGE_WATCH_DAYS),
+                xytext=(6, 0), textcoords="offset points",
+                va="center", ha="left",
+                fontsize=7, color=_AMBER,
+                bbox=_BG_BBOX,
+                clip_on=False,
+            )
+            ax.annotate(
+                f"Bad > {settings.HEALTH_BACKLOG_AGE_BAD_DAYS:.0f}d",
+                xy=(x_end, settings.HEALTH_BACKLOG_AGE_BAD_DAYS),
+                xytext=(6, 0), textcoords="offset points",
+                va="center", ha="left",
+                fontsize=7, color=_RED,
+                bbox=_BG_BBOX,
+                clip_on=False,
+            )
 
             ax.set_ylabel("Age (days)", fontsize=8, color=_TEXT_MUT)
             ax.tick_params(axis="y", labelsize=8, colors=_TEXT_MUT)
@@ -2582,13 +2639,45 @@ class HealthPage:
 
             # Threshold lines: 3d target, A4 watch/bad
             ax.axhline(y=3.0, color=_TEXT_MUT, linestyle="--", linewidth=1,
-                       alpha=0.5, label="3d target")
+                       alpha=0.5, label="_nolegend_")
             ax.axhline(y=settings.HEALTH_CYCLE_TIME_WATCH_DAYS, color=_AMBER,
                        linestyle="--", linewidth=1, alpha=0.6,
-                       label=f"Watch (≥{settings.HEALTH_CYCLE_TIME_WATCH_DAYS:.0f}d)")
+                       label="_nolegend_")
             ax.axhline(y=settings.HEALTH_CYCLE_TIME_BAD_DAYS, color=_RED,
                        linestyle="--", linewidth=1, alpha=0.6,
-                       label=f"Bad (≥{settings.HEALTH_CYCLE_TIME_BAD_DAYS:.0f}d)")
+                       label="_nolegend_")
+
+            # On-plot annotations (no legend reliance)
+            x_end = dates[-1]
+            _BG_BBOX = dict(boxstyle="round,pad=0.2", fc=_MPL_BG,
+                            ec="none", alpha=0.35)
+            ax.annotate(
+                "3d target",
+                xy=(x_end, 3.0),
+                xytext=(6, 0), textcoords="offset points",
+                va="center", ha="left",
+                fontsize=7, color=_TEXT_MUT,
+                bbox=_BG_BBOX,
+                clip_on=False,
+            )
+            ax.annotate(
+                f"Watch (≥{settings.HEALTH_CYCLE_TIME_WATCH_DAYS:.0f}d)",
+                xy=(x_end, settings.HEALTH_CYCLE_TIME_WATCH_DAYS),
+                xytext=(6, 0), textcoords="offset points",
+                va="center", ha="left",
+                fontsize=7, color=_AMBER,
+                bbox=_BG_BBOX,
+                clip_on=False,
+            )
+            ax.annotate(
+                f"Bad (≥{settings.HEALTH_CYCLE_TIME_BAD_DAYS:.0f}d)",
+                xy=(x_end, settings.HEALTH_CYCLE_TIME_BAD_DAYS),
+                xytext=(6, 0), textcoords="offset points",
+                va="center", ha="left",
+                fontsize=7, color=_RED,
+                bbox=_BG_BBOX,
+                clip_on=False,
+            )
 
             ax.set_ylabel("Cycle time (days)", fontsize=8, color=_TEXT_MUT)
             ax.tick_params(axis="y", labelsize=8, colors=_TEXT_MUT)

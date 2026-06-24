@@ -553,6 +553,8 @@ uv run --project /path/to/kanbai kanbai add "Hello world"
 uv run --project /path/to/kanbai kanbai ls
 ```
 
+For a guided understanding of the codebase, see [docs/dev/README.md](docs/dev/README.md).
+
 ---
 
 ## License

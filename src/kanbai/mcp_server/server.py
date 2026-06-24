@@ -11,7 +11,9 @@ from fastmcp.tools.function_tool import FunctionTool
 
 from kanbai.board import epics as _epics
 from kanbai.board import operations
+from kanbai.board import validation as _validation
 from kanbai.board.agent_rules import SHARED_RULES
+from kanbai.board.storage import activity_log, sqlite_cache
 
 # ── Direct board-refresh hook ────────────────────────────────────────────────
 # When the MCP server runs in the same process as the Flet UI (kanbai serve),
@@ -126,6 +128,157 @@ def call_tool_sync(name: str, args: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
+def _short_text(text: object, limit: int = 120) -> str:
+    value = " ".join(str(text or "").split())
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1] + "…"
+
+
+def _group_context_comments(comments: list[dict]) -> dict[str, list[dict]]:
+    buckets = {
+        "instructions": [],
+        "updates": [],
+        "decisions": [],
+        "blockers": [],
+        "notes": [],
+    }
+    role_to_bucket = {
+        "instruction": "instructions",
+        "update": "updates",
+        "decision": "decisions",
+        "blocker": "blockers",
+        "note": "notes",
+        "question": "notes",
+        "system": "notes",
+    }
+    for comment in comments:
+        role = str(comment.get("role") or "note").strip().lower()
+        bucket = role_to_bucket.get(role, "notes")
+        buckets[bucket].append(
+            {
+                "id": comment.get("id"),
+                "role": role,
+                "text": comment.get("text", ""),
+                "created_at": comment.get("created_at", ""),
+            }
+        )
+    return buckets
+
+
+def _linked_cards_context(card: dict) -> list[dict]:
+    linked_cards: list[dict] = []
+    seen: set[tuple[str, int]] = set()
+    for link in card.get("links") or []:
+        try:
+            number = int(link.get("number"))
+        except (TypeError, ValueError):
+            continue
+        link_type = str(link.get("type") or "")
+        key = (link_type, number)
+        if key in seen:
+            continue
+        seen.add(key)
+        row = sqlite_cache.get_card_by_number(number)
+        linked_cards.append(
+            {
+                "number": number,
+                "title": row.get("title") if row else None,
+                "lane": row.get("lane") if row else None,
+                "epic": row.get("epic") if row else None,
+                "archived": bool(row.get("archived", 0)) if row else None,
+                "link_type": link_type,
+            }
+        )
+    return linked_cards
+
+
+def _epic_context(epic_name: str | None) -> dict | None:
+    if not epic_name:
+        return None
+    comments = _epics.get_epic_comments(epic_name)[-5:]
+    return {
+        "name": epic_name,
+        "archived": _epics.is_epic_archived(epic_name),
+        "description": _epics.get_epic_description(epic_name),
+        "recent_comments": [
+            {
+                "id": comment.get("id"),
+                "text": comment.get("text", ""),
+                "created_at": comment.get("created_at", ""),
+            }
+            for comment in comments
+        ],
+    }
+
+
+def _recent_activity(card_id: str) -> list[dict]:
+    events = [event for event in activity_log.read_all() if str(event.get("card_id") or "") == card_id]
+    events.sort(key=lambda event: str(event.get("at") or ""))
+    recent: list[dict] = []
+    for event in events[-10:]:
+        et = str(event.get("type") or "event")
+        if et == "card_created":
+            action = "created"
+            detail = f"in {event.get('card_lane') or 'backlog'}"
+        elif et == "comment_added":
+            action = "comment added"
+            detail = f"{str(event.get('role') or 'note')}: {_short_text(event.get('text'))}"
+        elif et == "checklist_item_added":
+            action = "checklist added"
+            detail = _short_text(event.get("item_text") or event.get("text") or "")
+        elif et == "checklist_item_deleted":
+            action = "checklist removed"
+            detail = _short_text(event.get("item_text") or event.get("text") or "")
+        elif et == "attachment_added":
+            action = "attachment added"
+            detail = str(event.get("filename") or "")
+        elif et == "attachment_removed":
+            action = "attachment removed"
+            detail = str(event.get("filename") or "")
+        elif et == "comment_deleted":
+            action = "comment removed"
+            detail = _short_text(event.get("comment_text") or event.get("text") or "")
+        elif et == "card_reordered":
+            action = "reordered"
+            detail = _short_text(
+                f"{event.get('from_lane') or event.get('lane') or ''} → {event.get('to_lane') or event.get('lane') or ''}"
+                .strip()
+            )
+        elif et == "system_comment":
+            action = "system note"
+            detail = _short_text(event.get("text") or event.get("comment_text") or "")
+        else:
+            action = et.replace("_", " ")
+            detail = _short_text(
+                event.get("text")
+                or event.get("comment_text")
+                or event.get("item_text")
+                or event.get("filename")
+                or event.get("card_title")
+                or event.get("card_lane")
+                or ""
+            )
+        recent.append({"timestamp": str(event.get("at") or ""), "action": action, "detail": detail})
+    return recent
+
+
+def _merge_tags(tags: list[str] | None) -> list[str]:
+    merged: list[str] = []
+    for tag in ["discovered", *(tags or [])]:
+        cleaned = str(tag or "").strip()
+        if cleaned and cleaned not in merged:
+            merged.append(cleaned)
+    return merged
+
+
+def _normalize_discover_link_type(link_type: str) -> str:
+    link = str(link_type or "").strip().lower()
+    if link == "related_to":
+        return "relates_to"
+    return link
+
+
 @tool("write")
 def create_card(
     title: str,
@@ -161,6 +314,66 @@ def create_card(
         return {"error": str(exc)}
     _notify_board_changed()
     return {"id": card.id, "number": card.number, "title": card.title, "lane": card.lane, "epic": card.epic, "due_date": card.due_date}
+
+
+@tool("write")
+def discover_work(
+    from_card_id: str,
+    title: str,
+    description: str,
+    priority: str = "medium",
+    link_type: str = "related_to",
+    tags: list[str] | None = None,
+) -> dict:
+    """Create a backlog card for adjacent work discovered while working on another card."""
+    source = operations.get_card(from_card_id)
+    if source is None:
+        return {"error": f"Card '{from_card_id}' not found."}
+    source_number = source.number
+    if source_number is None:
+        return {"error": "Source card is missing a card number."}
+
+    normalized_link_type = _normalize_discover_link_type(link_type)
+    if normalized_link_type not in {"blocks", "blocked_by", "parent_of", "child_of", "duplicate", "relates_to"}:
+        return {"error": f"Invalid link type '{link_type}'."}
+
+    new_tags = _merge_tags(tags)
+    try:
+        new_card = operations.create_card(
+            title=title,
+            lane="backlog",
+            description=description,
+            tags=new_tags,
+            priority=priority,
+            epic=source.epic,
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
+
+    link_err = operations.link_cards(source_number, new_card.number or 0, normalized_link_type)
+    if link_err:
+        return {"error": link_err}
+
+    operations.add_comment(
+        from_card_id,
+        f"Discovered related work: #{new_card.number} — {title}",
+        role="note",
+    )
+    operations.add_comment(
+        new_card.id,
+        f"Discovered while working on #{source_number}",
+        role="system",
+    )
+    _notify_board_changed()
+    return {
+        "id": new_card.id,
+        "number": new_card.number,
+        "title": new_card.title,
+        "lane": new_card.lane,
+        "epic": new_card.epic,
+        "link_type": normalized_link_type,
+        "from_card_id": from_card_id,
+    }
 
 
 @tool("read")
@@ -207,6 +420,28 @@ def get_card(card_id: str) -> dict | None:
         "comments": card.comments,
         "checklist": [{"index": i, "text": item["text"], "done": item.get("done", False)} for i, item in enumerate(checklist)],
         "checklist_completion": f"{done_count}/{total_count}",
+    }
+
+
+@tool("read")
+def get_card_context(card_id: str) -> dict:
+    """Return a compact bundle of everything an agent needs to start work."""
+    card = get_card(card_id)
+    if card is None:
+        return {"error": f"Card '{card_id}' not found."}
+
+    comments = list(card.get("comments") or [])
+    card_ctx = dict(card)
+    card_ctx["file_refs"] = [_validation.display_file_ref(ref) for ref in card_ctx.get("file_refs") or []]
+    card_ctx["checklist_progress"] = card_ctx.pop("checklist_completion", "0/0")
+    card_ctx.pop("comments", None)
+
+    return {
+        "card": card_ctx,
+        "comments": _group_context_comments(comments),
+        "linked_cards": _linked_cards_context(card_ctx),
+        "epic": _epic_context(card_ctx.get("epic")),
+        "recent_activity": _recent_activity(card_id),
     }
 
 

@@ -11,8 +11,9 @@ embedded Kanbot or an external MCP client.
 
 WORKFLOW_DISCIPLINE = (
     "WORKFLOW DISCIPLINE (mandatory):\n"
-    "1. PICK UP — when you start work on a card, immediately move it to "
-    "in_progress using move_card before doing any other work on it.\n"
+    "1. PICK UP — when you start work on a card, immediately call get_card_context "
+    "to gather the bundled card context, then move it to in_progress using "
+    "move_card before doing any other work on it.\n"
     "2. TICK OFF CHECKLIST ITEMS — as you complete each acceptance-criteria or "
     "subtask item, call toggle_checklist_item to mark it done. "
     "This gives real-time progress visibility.\n"
@@ -69,6 +70,17 @@ CHECKLIST_DISCIPLINE = (
     "every unchecked item must either be ticked (done) or removed with justification.\n"
 )
 
+# ── Discovered work discipline ───────────────────────────────────────────────
+
+DISCOVERED_WORK_DISCIPLINE = (
+    "DISCOVERED WORK (mandatory when you notice adjacent out-of-scope work):\n"
+    "If you discover a bug, prerequisite, or follow-up task that is outside the "
+    "current card but should not be lost, create a new backlog card immediately. "
+    "Use discover_work when available; otherwise create the card, link it to the "
+    "current card, and add a brief note on the current card. Tag the new card with "
+    "'discovered' and keep working on the original card. Do not fix the discovery inline.\n"
+)
+
 # ── Comment role discipline ───────────────────────────────────────────────────
 # Use the role parameter of add_card_comment to categorise every comment.
 
@@ -91,5 +103,6 @@ SHARED_RULES = (
     WORKFLOW_DISCIPLINE + "\n"
     + CARD_CREATION_DEFAULTS + "\n"
     + CHECKLIST_DISCIPLINE + "\n"
+    + DISCOVERED_WORK_DISCIPLINE + "\n"
     + COMMENT_ROLE_RULES
 )
