@@ -22,5 +22,17 @@
     "archived_card_ids": [],
     "description": "",
     "comments": []
+  },
+  "kanbai-from-scratch": {
+    "archived": false,
+    "archived_card_ids": [],
+    "description": "A learning-first epic for understanding Kanbai end-to-end, documenting each subsystem, and creating refactor-friendly tutorials so future development is faster, clearer, and less token-intensive.",
+    "comments": []
+  },
+  "kanbai-app": {
+    "archived": false,
+    "archived_card_ids": [],
+    "description": "Transition Kanbai from a gitops-first board into a stateful application that can be launched via Docker Compose, persist data in SQLite with cloud backup, and operate across multiple repositories simultaneously. The target architecture introduces repository-scoped epics, agent registration/deployment, a skills registry with both global and per-epic skills, and a path toward shared memory across epics while preserving clear delivery slices and migration safety.",
+    "comments": []
   }
 }
